@@ -39261,27 +39261,57 @@ async function mfDriveReadFamilyFileById(folderId, fileName) {
   return mfReadSharedFolderFile(folderId, fileName);
 }
 
-// ── Manifest helpers ────────────────────────────────────────────────
+// ── Manifest helpers — Firestore backed (encrypted, cross-device) ──
+// Financial data stays on Drive. Only the encrypted member roster
+// goes to Firestore. Family key encrypts it — Firebase sees ciphertext only.
+
+const MF_FS_COLLECTION = 'mf_family'; // Firestore collection for family manifests
+
+function mfGetDb() {
+  return window._fbDb || (window._fbDb = firebase.firestore());
+}
+
 async function mfReadManifest(folderId, keyBytes) {
-  const b64 = await mfDriveReadFamilyFile(folderId, MF_MANIFEST_FILE);
-  if (!b64) return null;
-  return mfFamilyDecrypt(b64.trim(), keyBytes);
+  const meta = mfGetFamilyMeta();
+  if (!meta?.familyId) return null;
+  try {
+    const doc = await mfGetDb().collection(MF_FS_COLLECTION).doc(meta.familyId).get();
+    if (!doc.exists) return null;
+    const b64 = doc.data()?.enc;
+    if (!b64) return null;
+    return mfFamilyDecrypt(b64, keyBytes);
+  } catch(e) {
+    console.error('[MF Family] Firestore read error:', e);
+    return null;
+  }
 }
 
 async function mfWriteManifest(folderId, keyBytes, manifest) {
-  const b64    = await mfFamilyEncrypt(manifest, keyBytes);
-  const fileId = await mfDriveWriteFamilyFile(folderId, MF_MANIFEST_FILE, b64);
-  // Make manifest file publicly accessible by file ID (no search needed by members)
-  if (fileId) {
-    try {
-      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'reader', type: 'anyone' })
-      });
-    } catch(e) { /* permission already set */ }
-  }
-  return fileId;
+  const familyId = manifest.familyId || mfGetFamilyMeta()?.familyId;
+  if (!familyId) throw new Error('No familyId for manifest write');
+  const b64 = await mfFamilyEncrypt(manifest, keyBytes);
+  await mfGetDb().collection(MF_FS_COLLECTION).doc(familyId).set({
+    enc: b64,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  console.log('[MF Family] Manifest written to Firestore for familyId:', familyId);
+  return familyId; // return familyId as the "file ID" equivalent
+}
+
+async function mfWriteManifestForFamily(familyId, keyBytes, manifest) {
+  const b64 = await mfFamilyEncrypt(manifest, keyBytes);
+  await mfGetDb().collection(MF_FS_COLLECTION).doc(familyId).set({
+    enc: b64,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function mfReadManifestForFamily(familyId, keyBytes) {
+  const doc = await mfGetDb().collection(MF_FS_COLLECTION).doc(familyId).get();
+  if (!doc.exists) return null;
+  const b64 = doc.data()?.enc;
+  if (!b64) return null;
+  return mfFamilyDecrypt(b64, keyBytes);
 }
 
 // ── CREATE FAMILY GROUP (Owner flow) ──────────────────────────────
@@ -39359,14 +39389,11 @@ window.mfFamilyShowInvite = async function() {
   keyB64 = btoa(keyB64);
 
   const payload = {
-    v: 2,
+    v: 3,
     familyId: meta.familyId,
     folderId: meta.folderId,
-    manifestFileId: meta.manifestFileId || null,
     ownerName: meta.ownerName,
     keyB64,
-    // Embed current manifest so member can join without reading Drive
-    manifestSnapshot: manifest || { familyId: meta.familyId, ownerName: meta.ownerName, members: [] },
     expires: Date.now() + MF_INVITE_EXPIRY_MS
   };
   const { code, fullPayload } = mfGen6DigitCode(payload);
@@ -39415,21 +39442,27 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
-  console.log('[MF Family] v:', payload.v, 'hasSnapshot:', !!payload.manifestSnapshot);
+  console.log('[MF Family] Joining familyId:', payload.familyId);
 
   try {
-    // v2 invite: manifest snapshot embedded — no Drive read needed at all
-    let manifest = payload.manifestSnapshot || null;
-    if (!manifest) {
-      // v1 fallback: try reading from Drive (may fail cross-user — expected)
-      console.log('[MF Family] No snapshot in invite — trying Drive read');
-      if (payload.manifestFileId) {
-        manifest = await mfReadManifestById(payload.manifestFileId, keyBytes);
-      }
+    // Read manifest from Firestore using familyId — works cross-account
+    let manifest = null;
+    try {
+      manifest = await mfReadManifestForFamily(payload.familyId, keyBytes);
+      console.log('[MF Family] Manifest from Firestore:', manifest ? 'OK members='+manifest.members?.length : 'null');
+    } catch(e) {
+      console.warn('[MF Family] Firestore read failed:', e.message);
     }
-    console.log('[MF Family] Manifest:', manifest ? 'OK members='+manifest.members?.length : 'null');
+
+    // If Firestore read failed (e.g. not yet signed in to Firebase), use a fresh manifest
     if (!manifest) {
-      showToast('❌ Could not read family data — ask owner to generate a new invite', 3500); return;
+      console.log('[MF Family] Creating fresh manifest for join');
+      manifest = {
+        familyId: payload.familyId,
+        ownerName: payload.ownerName,
+        createdAt: new Date().toISOString(),
+        members: []
+      };
     }
 
     const activeCount = (manifest.members || []).filter(m => m.status === 'active').length;
@@ -39455,14 +39488,13 @@ window.mfFamilyJoin = async function() {
       pendingJoin: true  // flag for owner to confirm on next manifest read
     });
 
-    // Try writing manifest back (will succeed if owner shared folder has writer permission)
+    // Write updated manifest to Firestore — works cross-account, member has own Firebase auth
     try {
-      if (payload.manifestFileId) {
-        await mfWriteManifestById(payload.manifestFileId, keyBytes, manifest);
-        console.log('[MF Family] Manifest written back via file ID');
-      }
+      await mfWriteManifestForFamily(payload.familyId, keyBytes, manifest);
+      console.log('[MF Family] Manifest written to Firestore — owner will see member on next open');
     } catch(e) {
-      console.warn('[MF Family] Could not write manifest — owner will see join on next sync:', e.message);
+      console.warn('[MF Family] Firestore write failed:', e.message);
+      showToast('⚠️ Joined locally — owner needs to be online to sync roster', 3000);
     }
 
     mfHideFamilyModal();
