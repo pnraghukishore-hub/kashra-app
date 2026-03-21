@@ -39349,11 +39349,36 @@ window.mfFamilyShowInvite = async function() {
   keyBytes.forEach(b => keyB64 += String.fromCharCode(b));
   keyB64 = btoa(keyB64);
 
+  // Ensure manifestFileId is in meta — look it up from Drive if missing
+  let manifestFileId = meta.manifestFileId || null;
+  if (!manifestFileId && window._driveToken) {
+    try {
+      const q = encodeURIComponent(`name='${MF_MANIFEST_FILE}' and '${meta.folderId}' in parents and trashed=false`);
+      const r = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
+        { headers: { Authorization: 'Bearer ' + window._driveToken } }
+      );
+      const j = await r.json();
+      manifestFileId = (j.files || [])[0]?.id || null;
+      if (manifestFileId) {
+        // Cache it in meta and make file public
+        meta.manifestFileId = manifestFileId;
+        mfSaveFamilyMeta(meta);
+        await fetch(`https://www.googleapis.com/drive/v3/files/${manifestFileId}/permissions`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'writer', type: 'anyone' })
+        });
+        console.log('[MF Family] manifestFileId resolved and cached:', manifestFileId);
+      }
+    } catch(e) { console.warn('[MF Family] Could not resolve manifestFileId:', e); }
+  }
+
   const payload = {
     v: 1,
     familyId: meta.familyId,
     folderId: meta.folderId,
-    manifestFileId: meta.manifestFileId || null,
+    manifestFileId,
     ownerName: meta.ownerName,
     keyB64,
     expires: Date.now() + MF_INVITE_EXPIRY_MS
