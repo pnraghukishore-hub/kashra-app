@@ -8764,7 +8764,11 @@ function renderHome() {
   }
   renderHomeInsights(expenses, income, investments);
   renderSettings();
-  if (typeof renderFamilyDashCard === 'function') renderFamilyDashCard();
+  // Family dash — debounced so rapid renderHome() calls don't cause Firestore hammering
+  if (typeof renderFamilyDashCard === 'function') {
+    clearTimeout(window._familyDashTimer);
+    window._familyDashTimer = setTimeout(renderFamilyDashCard, 800);
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -39751,8 +39755,11 @@ window.mfShareInviteWhatsApp = function() {
 
 // ── FAMILY DASHBOARD CARD (Home screen) ───────────────────────────
 window.renderFamilyDashCard = async function() {
+  if (window._familyDashRunning) return; // prevent concurrent runs
+  window._familyDashRunning = true;
+  try {
   const card = document.getElementById('family-dash-card');
-  if (!card) return;
+  if (!card) { window._familyDashRunning = false; return; }
 
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
@@ -39862,6 +39869,9 @@ window.renderFamilyDashCard = async function() {
         nwEl.style.fontSize = '';
       }
     } catch(e) { nwEl.textContent = '—'; }
+  }
+  } finally {
+    window._familyDashRunning = false;
   }
 };
 
