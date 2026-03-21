@@ -39331,9 +39331,8 @@ window.mfFamilyShowInvite = async function() {
 window.mfFamilyJoin = async function() {
   // Member needs Drive connected to access owner's shared folder
   if (!window._driveToken) {
-    showToast('⚠️ Connect Google Drive first (Settings → Zero-Knowledge Backup)', 3500);
-    mfHideFamilyModal();
-    return;
+    showToast('⚠️ Connect Google Drive first: Settings → Zero-Knowledge Backup → Connect', 4000);
+    return; // Keep modal open so user can come back
   }
   const input = document.getElementById('mf-family-join-input');
   const raw   = (input?.value || '').trim();
@@ -39477,17 +39476,17 @@ window.mfShowFamilyModal = function mfShowFamilyModal(mode) {
     const expires = new Date(inv.payload.expires).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     content.innerHTML = `
       <div style="font-weight:900;font-size:1.1em;color:#1E2A6E;margin-bottom:4px;">Invite Family Member</div>
-      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:18px;">Share this code — expires at ${expires}</div>
-      <div id="mf-invite-qr" style="text-align:center;margin-bottom:16px;">
+      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:14px;">Expires at ${expires} — share via WhatsApp or any channel</div>
+      <div id="mf-invite-qr" style="text-align:center;margin-bottom:14px;">
         <div style="font-size:0.75em;color:#999;margin-top:8px;">Generating QR…</div>
       </div>
-      <div style="background:#F0F4FF;border-radius:14px;padding:14px;text-align:center;margin-bottom:16px;">
-        <div style="font-size:0.7em;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">Share Code</div>
-        <div style="font-family:monospace;font-size:1.1em;font-weight:900;color:#1E2A6E;letter-spacing:3px;">${inv.code}</div>
-        <div style="font-size:0.68em;color:#999;margin-top:4px;">Paste full code for manual entry</div>
+      <div style="background:#F0F4FF;border-radius:14px;padding:12px;margin-bottom:10px;">
+        <div style="font-size:0.7em;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">📋 Tap button below to copy full invite code</div>
+        <div style="font-family:monospace;font-size:0.72em;color:#4F46E5;word-break:break-all;line-height:1.4;max-height:60px;overflow:hidden;">${inv.fullPayload.slice(0,80)}…</div>
+        <div style="font-size:0.68em;color:#EF4444;font-weight:700;margin-top:6px;">⚠️ Do NOT type the short code — use Copy button below</div>
       </div>
-      <button onclick="mfCopyInviteCode()" style="width:100%;background:#4F46E5;color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-bottom:8px;">
-        📋 Copy Invite Code
+      <button onclick="mfCopyInviteCode()" style="width:100%;background:#4F46E5;color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:8px;">
+        📋 Copy Full Invite Code → Share on WhatsApp
       </button>
       <button onclick="mfHideFamilyModal()" style="width:100%;background:#F5F5F5;color:#666;border:none;border-radius:12px;padding:11px;font-family:Nunito;font-weight:800;font-size:0.85em;cursor:pointer;">
         Done
@@ -39514,11 +39513,12 @@ window.mfShowFamilyModal = function mfShowFamilyModal(mode) {
   if (mode === 'join') {
     content.innerHTML = `
       <div style="font-weight:900;font-size:1.1em;color:#1E2A6E;margin-bottom:4px;">Join a Family Group</div>
-      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:18px;">Enter the invite code from the family owner</div>
+      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:14px;">Ask the owner to tap <b>Copy Invite Code</b> and share it with you</div>
       <input type="text" id="mf-family-member-name" placeholder="Your name (e.g. Swathi)"
         style="width:100%;box-sizing:border-box;border:2px solid #E0E7FF;border-radius:12px;padding:12px 14px;font-family:Nunito;font-size:0.9em;font-weight:700;margin-bottom:10px;outline:none;">
-      <textarea id="mf-family-join-input" placeholder="Paste invite code here"
-        style="width:100%;box-sizing:border-box;border:2px solid #E0E7FF;border-radius:12px;padding:12px 14px;font-family:Nunito;font-size:0.85em;font-weight:600;margin-bottom:14px;outline:none;resize:none;height:80px;"></textarea>
+      <textarea id="mf-family-join-input" placeholder="Paste the full invite code here (long text, not the short display code)"
+        style="width:100%;box-sizing:border-box;border:2px solid #E0E7FF;border-radius:12px;padding:12px 14px;font-family:Nunito;font-size:0.85em;font-weight:600;margin-bottom:6px;outline:none;resize:none;height:90px;"></textarea>
+      <div style="font-size:0.72em;color:#F59E0B;font-weight:700;margin-bottom:12px;">⚠️ Paste the full copied code — it is a long string, not the short 8-char code</div>
       <button onclick="mfFamilyJoin()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:8px;">
         🔗 Join Family
       </button>
