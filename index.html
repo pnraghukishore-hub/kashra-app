@@ -30928,24 +30928,19 @@ function getDataRef(db, uid, email) {
   return db.collection('users').doc(uid);
 }
 
-// ── Firebase Save: chunked to stay under 1MB Firestore limit ──────────────
-let _saveTimer = null;
 // ── Personal data save/load → Google Drive (zero-knowledge) ──────────────
 // Firestore is used ONLY for family coordination (mf_family_* collections)
 // Personal financial data never touches Firestore in KashRA public architecture
+let _saveTimer = null; // kept for compatibility — firebaseSave is now a no-op
 
 function firebaseSave() {
   // No-op — personal data saved via mfDriveAutoSave() (Drive, AES-256)
-  // Firestore personal sync removed for zero-knowledge public launch
 }
 
 function _doFirebaseSave() {
   // No-op — see firebaseSave()
 }
 
-let _saveTimer = null; // kept to avoid reference errors
-
-// ── Firebase Load: merge chunks back into data ────────────────────────────
 // ── Personal data load → from Drive (on sign-in and manual refresh) ──────
 async function firebaseLoad(uid) {
   // Personal data lives on Drive, not Firestore
@@ -40103,6 +40098,7 @@ async function mfSyncMemberNW() {
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
   if (!meta || !keyBytes) return;
+  if (typeof data === 'undefined') return; // main app not yet initialized
 
   const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
   if (!myUid) return;
@@ -40427,11 +40423,15 @@ setTimeout(() => {
   setTimeout(async () => {
     mfCheckRekey();
     mfSyncMemberNW();
-    mfSyncFamilyTxns(viewMonth);  // push own txns immediately
-    mfStartFamilyTxnsListener();  // listen for others' txns
-    await mfLoadFamilyTxns(viewMonth); // load others' txns
-    try { renderHome(); } catch(e) {}
-    try { renderTransactions && renderTransactions(); } catch(e) {}
+    // Guard: data and viewMonth may not be defined if main app hasn't loaded yet
+    const mk = (typeof viewMonth !== 'undefined') ? viewMonth : null;
+    if (mk && typeof data !== 'undefined') {
+      mfSyncFamilyTxns(mk);
+      mfStartFamilyTxnsListener();
+      await mfLoadFamilyTxns(mk);
+      try { renderHome(); } catch(e) {}
+      try { renderTransactions && renderTransactions(); } catch(e) {}
+    }
   }, 3000);
 }, 800);
 
