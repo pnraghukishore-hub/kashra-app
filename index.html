@@ -2754,7 +2754,12 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
   <!-- ── SPENDING SECTION ── -->
   <div class="home-section active" id="hsec-spending">
     <div class="spending-hero">
-      <div class="spending-label">💸 <span data-i18n="totalSpending">Total Spending</span></div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;">
+        <div class="spending-label">💸 <span data-i18n="totalSpending">Total Spending</span></div>
+        <button onclick="toggleNWVisibility()" title="Hide/show all amounts"
+          style="background:none;border:none;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:10px;background:var(--bg);color:var(--text-light);"
+          id="home-privacy-btn">🔓</button>
+      </div>
       <div class="spending-amount" id="home-spending">$0</div>
     </div>
     <div class="budget-grid" id="budget-grid"></div>
@@ -3999,6 +4004,29 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
           <button class="cat-add-btn" onclick="addCustomNWType()">+ Add</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ═══ FAMILY NW SHARING group ═══ -->
+  <div id="family-nw-settings-group" style="display:none;background:white;border-radius:16px;overflow:hidden;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,0.05);">
+    <div style="font-size:0.65em;font-weight:900;color:#888;text-transform:uppercase;letter-spacing:0.8px;padding:12px 16px 6px;">👨‍👩‍👧‍👦 Family NW Sharing</div>
+    <div onclick="toggleAccordion('acc-family-nw')" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;">
+      <div style="width:36px;height:36px;background:#F5F0FF;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0;">🏦</div>
+      <div style="flex:1;">
+        <div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Account Visibility</div>
+        <div style="font-size:0.7em;color:var(--text-light);font-weight:600;margin-top:1px;" id="family-nw-count-label">Choose which accounts show in family dashboard</div>
+      </div>
+      <span style="color:#CCC;font-size:0.85em;">›</span>
+    </div>
+    <div class="acc-body" id="acc-family-nw-body" style="display:none;padding:0 16px 14px;">
+      <div style="display:flex;gap:8px;margin-bottom:12px;margin-top:8px;">
+        <button onclick="mfBulkFamilyVisible(true)" style="flex:1;background:#7C3AED;color:white;border:none;border-radius:10px;padding:9px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">✅ Select All</button>
+        <button onclick="mfBulkFamilyVisible(false)" style="flex:1;background:#F3F4F6;color:#1E2A6E;border:none;border-radius:10px;padding:9px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">☐ Deselect All</button>
+      </div>
+      <div id="family-nw-account-list"></div>
+      <button onclick="mfSaveBulkFamilyVisible()" style="width:100%;background:#10B981;color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-top:10px;">
+        💾 Save Family Visibility
+      </button>
     </div>
   </div>
 
@@ -8764,6 +8792,8 @@ function renderHome() {
   }
   renderHomeInsights(expenses, income, investments);
   renderSettings();
+  // Restore privacy mode state after re-render
+  if (typeof applyPrivacyMode === 'function') applyPrivacyMode();
   // Family dash — debounced so rapid renderHome() calls don't cause Firestore hammering
   if (typeof renderFamilyDashCard === 'function') {
     clearTimeout(window._familyDashTimer);
@@ -11936,6 +11966,7 @@ function renderSettings() {
   renderFXRatesPanel();
   // Family panel
   if (typeof renderFamilyPanel === 'function') renderFamilyPanel();
+  if (typeof mfRenderFamilyNWSettings === 'function') mfRenderFamilyNWSettings();
   // Populate reset summary in case data accordion is already open
   try { renderResetSummary(); } catch(e) {}
 }
@@ -23492,12 +23523,24 @@ function toggleNWSection(name) { trackFeature('nw_toggle_section');
 }
 
 // ── NW Balance Visibility Toggle ──────────────────────────────
-let _nwHidden = false;
+const MF_PRIVACY_KEY = 'mf_privacy_mode';
+let _nwHidden = localStorage.getItem(MF_PRIVACY_KEY) === '1';
+
 function toggleNWVisibility() {
   _nwHidden = !_nwHidden;
+  localStorage.setItem(MF_PRIVACY_KEY, _nwHidden ? '1' : '0');
+  applyPrivacyMode();
+}
+
+function applyPrivacyMode() {
   const iconEl = document.getElementById('nw-eye-icon');
-  if (iconEl) iconEl.textContent = _nwHidden ? '🔒' : '🔓';
-  // Mask/unmask all monetary value elements in NW screen
+  if (iconEl) iconEl.textContent = _nwHidden ? '\xf0\x9f\x94\x92' : '\xf0\x9f\x94\x93';
+  document.body.classList.toggle('privacy-mode', _nwHidden);
+  // Sync home privacy button icon
+  const homePrivBtn = document.getElementById('home-privacy-btn');
+  if (homePrivBtn) homePrivBtn.textContent = _nwHidden ? '\xf0\x9f\x94\x92' : '\xf0\x9f\x94\x93';
+
+  // NW screen targets
   const targets = document.querySelectorAll(
     '#nw-total, #nw-assets-hero, #nw-liab-hero, #nw-change, ' +
     '#nw-assets-total, #nw-liab-total, #nw-alloc-total, ' +
@@ -23506,18 +23549,22 @@ function toggleNWVisibility() {
     '.nw-holding-row-val, .metal-holding-value, ' +
     '#mi-kpi-row, #mi-cat-bars, #mi-budget-section'
   );
-  // Also mask/unmask inline-rendered account body values (dynamically generated)
   document.querySelectorAll('#screen-networth [style*="font-weight:900"]').forEach(el => {
-    // Only target elements that look like monetary values (contain $ or currency sym)
-    if (el.textContent && /[$₹€£¥]|,\d{3}/.test(el.textContent)) {
+    if (el.textContent && /[$\xe2\x82\xb9\xe2\x82\xac\xc2\xa3\xc2\xa5]|,\d{3}/.test(el.textContent))
       el.classList.toggle('nw-masked', _nwHidden);
-    }
   });
-  targets.forEach(el => {
+  targets.forEach(el => el.classList.toggle('nw-masked', _nwHidden));
+  document.querySelectorAll('#nw-insights-list .nw-insight-val').forEach(el => {
     el.classList.toggle('nw-masked', _nwHidden);
   });
-  // Also mask the insight cards amounts
-  document.querySelectorAll('#nw-insights-list .nw-insight-val').forEach(el => {
+
+  // Home screen amounts
+  ['home-spending','home-income','home-salary','home-gifts','home-other-income',
+   'family-dash-spend','family-dash-nw'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('nw-masked', _nwHidden);
+  });
+  document.querySelectorAll('.cat-amount, .spending-amount, .home-income-total').forEach(el => {
     el.classList.toggle('nw-masked', _nwHidden);
   });
 }
@@ -39160,6 +39207,10 @@ async function mfDriveInitWithUID() {
 // Run init after DOM ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', mfDriveInit);
+  // Restore privacy mode on load
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => { if (typeof applyPrivacyMode === 'function') applyPrivacyMode(); }, 500);
+  });
 } else {
   setTimeout(mfDriveInit, 500);
 }
@@ -40087,6 +40138,77 @@ window.mfNWAutoSync = function() {
   if (!mfGetFamilyMeta()) return;
   clearTimeout(_mfNWSyncTimer);
   _mfNWSyncTimer = setTimeout(mfSyncMemberNW, 8000);
+};
+
+// ── BULK FAMILY VISIBLE (Settings) ────────────────────────────────
+// Temporary state for bulk edit — not saved until user taps Save
+window._mfBulkFamilyState = {};
+
+window.mfRenderFamilyNWSettings = function() {
+  const meta = mfGetFamilyMeta();
+  const group = document.getElementById('family-nw-settings-group');
+  if (!group) return;
+
+  // Only show if user is in a family
+  if (!meta) { group.style.display = 'none'; return; }
+  group.style.display = 'block';
+
+  const accounts = data._nwAccounts || [];
+  const countLabel = document.getElementById('family-nw-count-label');
+  const visCount = accounts.filter(a => a.familyVisible).length;
+  if (countLabel) countLabel.textContent = `${visCount} of ${accounts.length} accounts shared`;
+
+  // Init bulk state from current account values
+  window._mfBulkFamilyState = {};
+  accounts.forEach(a => { window._mfBulkFamilyState[a.id] = !!a.familyVisible; });
+
+  mfRenderFamilyNWList();
+};
+
+function mfRenderFamilyNWList() {
+  const listEl = document.getElementById('family-nw-account-list');
+  if (!listEl) return;
+  const accounts = data._nwAccounts || [];
+  if (!accounts.length) {
+    listEl.innerHTML = '<div style="font-size:0.8em;color:#999;padding:8px 0;">No NW accounts yet</div>';
+    return;
+  }
+  listEl.innerHTML = accounts.map(a => {
+    const checked = window._mfBulkFamilyState[a.id] ? 'checked' : '';
+    const bal = typeof nwConvert === 'function' ? nwConvert(a.balance||0, a.currency) : (a.balance||0);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F5F5F5;">
+      <input type="checkbox" id="fnw-${a.id}" ${checked}
+        onchange="window._mfBulkFamilyState['${a.id}']=this.checked"
+        style="width:18px;height:18px;cursor:pointer;accent-color:#7C3AED;">
+      <label for="fnw-${a.id}" style="flex:1;cursor:pointer;">
+        <div style="font-weight:800;font-size:0.85em;color:#1E2A6E;">${a.name}</div>
+        <div style="font-size:0.7em;color:#999;font-weight:600;">${a.type} · ${fmt(bal)}</div>
+      </label>
+    </div>`;
+  }).join('');
+}
+
+window.mfBulkFamilyVisible = function(selectAll) {
+  const accounts = data._nwAccounts || [];
+  accounts.forEach(a => { window._mfBulkFamilyState[a.id] = selectAll; });
+  mfRenderFamilyNWList();
+};
+
+window.mfSaveBulkFamilyVisible = function() {
+  if (!data._nwAccounts) return;
+  let changed = 0;
+  data._nwAccounts.forEach(a => {
+    const newVal = !!window._mfBulkFamilyState[a.id];
+    if (a.familyVisible !== newVal) { a.familyVisible = newVal; changed++; }
+  });
+  if (changed > 0) {
+    save();
+    showToast(`✅ ${changed} account${changed!==1?'s':''} updated — family visibility saved`, 2500);
+    mfRenderFamilyNWSettings(); // refresh count
+    if (typeof renderFamilyDashCard === 'function') renderFamilyDashCard();
+  } else {
+    showToast('No changes to save', 1500);
+  }
 };
 
 // ── MEMBER SPOTLIGHT ──────────────────────────────────────────────
