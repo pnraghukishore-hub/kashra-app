@@ -39084,10 +39084,10 @@ async function mfFamilyDecrypt(b64, rawKeyBytes) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
-function mfGetFamilyMeta() {
+window.mfGetFamilyMeta = function mfGetFamilyMeta() {
   try { return JSON.parse(localStorage.getItem(MF_FAMILY_META) || 'null'); } catch(e) { return null; }
 }
-function mfGetFamilyKeyBytes() {
+window.mfGetFamilyKeyBytes = function mfGetFamilyKeyBytes() {
   const b64 = localStorage.getItem(MF_FAMILY_KEY);
   if (!b64) return null;
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
