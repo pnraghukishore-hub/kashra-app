@@ -39413,7 +39413,7 @@ window.mfFamilyDisband = async function() {
 };
 
 // ── MODAL CONTROL ──────────────────────────────────────────────────
-function mfShowFamilyModal(mode) {
+window.mfShowFamilyModal = function mfShowFamilyModal(mode) {
   const overlay = document.getElementById('mf-family-overlay');
   const content = document.getElementById('mf-family-modal-content');
   if (!overlay || !content) return;
