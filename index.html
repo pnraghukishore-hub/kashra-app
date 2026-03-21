@@ -38669,6 +38669,7 @@ function mfShowPassphraseModal(mode) {
 function mfHidePassphraseModal() {
   const overlay = document.getElementById('mf-passphrase-overlay');
   if (overlay) overlay.style.display = 'none';
+  // Don't reset _mfPassphraseShown — prevents re-showing in same session
 }
 
 // ── Passphrase setup (first time) ─────────────────────────────────
@@ -39003,14 +39004,20 @@ function mfDriveInit() {
   mfUpdateDriveUI(false);
   const setup = localStorage.getItem(MF_SETUP_KEY);
   if (setup === 'done') {
-    // Passphrase was set before — prompt unlock after app renders
+    // Passphrase was set before — prompt unlock once only
     setTimeout(() => {
-      if (!window._mfEncPassphrase) mfShowPassphraseModal('unlock');
+      if (!window._mfEncPassphrase && !window._mfPassphraseShown) {
+        window._mfPassphraseShown = true;
+        mfShowPassphraseModal('unlock');
+      }
     }, 1200);
   } else if (setup !== 'skipped') {
-    // First time — prompt setup after onboarding
+    // First time — prompt setup after onboarding, once only
     setTimeout(() => {
-      if (!localStorage.getItem(MF_SETUP_KEY)) mfShowPassphraseModal('setup');
+      if (!localStorage.getItem(MF_SETUP_KEY) && !window._mfPassphraseShown) {
+        window._mfPassphraseShown = true;
+        mfShowPassphraseModal('setup');
+      }
     }, 3000);
   }
   mfInitTokenClient();
@@ -40135,8 +40142,8 @@ async function mfCheckRekey() {
 
 // Trigger family dash card render after module loads
 setTimeout(() => {
-  if (typeof renderFamilyDashCard === 'function') renderFamilyDashCard();
-  // Check for pending re-key (member gets new key silently after removal event)
+  // renderFamilyDashCard is called by renderHome() with 800ms debounce
+  // Just run the background tasks here
   setTimeout(() => {
     mfCheckRekey();
     mfSyncMemberNW();
