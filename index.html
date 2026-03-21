@@ -39167,21 +39167,61 @@ async function mfDriveReadFamilyFile(folderId, fileName) {
 }
 
 // ── Member access to owner's family folder via folder ID ───────────
-async function mfDriveReadFamilyFileById(folderId, fileName) {
-  // Member uses folder ID directly (shared by owner in invite)
-  const searchResp = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=name='${fileName}'+and+'${folderId}'+in+parents+and+trashed=false&fields=files(id)`,
+// Read a file from a shared folder using supportsAllDrives (member accessing owner's folder)
+async function mfReadSharedFolderFile(folderId, fileName) {
+  const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
     { headers: { Authorization: 'Bearer ' + window._driveToken } }
   );
-  const json = await searchResp.json();
+  const json = await resp.json();
   const fileId = (json.files || [])[0]?.id;
   if (!fileId) return null;
-  const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+  const fileResp = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
     { headers: { Authorization: 'Bearer ' + window._driveToken } }
   );
-  if (!resp.ok) return null;
-  return await resp.text();
+  if (!fileResp.ok) return null;
+  return await fileResp.text();
+}
+
+// Write a file to a shared folder (create or update) with supportsAllDrives
+async function mfWriteSharedFolderFile(folderId, fileName, b64Content) {
+  const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+  const searchResp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  const searchJson = await searchResp.json();
+  const existingId = (searchJson.files || [])[0]?.id;
+  const metadata   = existingId ? {} : { name: fileName, parents: [folderId] };
+  const boundary   = 'mff_' + Date.now();
+  const body = [
+    '--' + boundary,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify(metadata),
+    '--' + boundary,
+    'Content-Type: text/plain',
+    '',
+    b64Content,
+    '--' + boundary + '--'
+  ].join('\r\n');
+  const url = existingId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart&supportsAllDrives=true`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true`;
+  const resp = await fetch(url, {
+    method: existingId ? 'PATCH' : 'POST',
+    headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': `multipart/related; boundary="${boundary}"` },
+    body
+  });
+  if (!resp.ok) throw new Error('Shared folder write failed: ' + resp.status);
+  return (await resp.json()).id;
+}
+
+// Keep old name as alias
+async function mfDriveReadFamilyFileById(folderId, fileName) {
+  return mfReadSharedFolderFile(folderId, fileName);
 }
 
 // ── Manifest helpers ────────────────────────────────────────────────
@@ -39289,72 +39329,76 @@ window.mfFamilyShowInvite = async function() {
 
 // ── JOIN FAMILY (Member flow) ──────────────────────────────────────
 window.mfFamilyJoin = async function() {
+  // Member needs Drive connected to access owner's shared folder
   if (!window._driveToken) {
-    showToast('⚠️ Connect Google Drive first', 2500); return;
+    showToast('⚠️ Connect Google Drive first (Settings → Zero-Knowledge Backup)', 3500);
+    mfHideFamilyModal();
+    return;
   }
   const input = document.getElementById('mf-family-join-input');
   const raw   = (input?.value || '').trim();
-  if (!raw) { showToast('⚠️ Enter the invite code', 2000); return; }
+  if (!raw) { showToast('⚠️ Paste the invite code first', 2000); return; }
+
+  const memberName = (document.getElementById('mf-family-member-name')?.value || '').trim();
+  if (!memberName) { showToast('⚠️ Enter your name first', 2000); return; }
+
+  // Decode payload from full base64
+  let payload;
+  try {
+    payload = JSON.parse(atob(raw));
+  } catch(e) {
+    showToast('❌ Invalid invite code — paste the full code from the owner', 3000); return;
+  }
+
+  if (!payload.familyId || !payload.folderId || !payload.keyB64) {
+    showToast('❌ Invite code is incomplete — ask owner to generate a new one', 3000); return;
+  }
+  if (Date.now() > payload.expires) {
+    showToast('❌ Invite code expired (24hr limit) — ask owner for a new one', 3000); return;
+  }
+
+  let keyBytes;
+  try {
+    keyBytes = Uint8Array.from(atob(payload.keyB64), c => c.charCodeAt(0));
+  } catch(e) {
+    showToast('❌ Could not read invite key — code may be corrupted', 3000); return;
+  }
+
+  showToast('🔗 Joining family…', 2000);
 
   try {
-    // Decode payload — input is either the 8-char display code or the full base64
-    let payload;
-    // Try full base64 first (from QR scan), then look up from pending
+    // Read manifest from owner's shared folder using supportsAllDrives
+    const manifestB64 = await mfReadSharedFolderFile(payload.folderId, MF_MANIFEST_FILE);
+    if (!manifestB64) {
+      showToast('❌ Could not reach family folder — check internet connection', 3000); return;
+    }
+
+    let manifest;
     try {
-      payload = JSON.parse(atob(raw));
+      manifest = await mfFamilyDecrypt(manifestB64.trim(), keyBytes);
     } catch(e) {
-      showToast('❌ Invalid invite code format', 2500); return;
+      showToast('❌ Could not decrypt family data — invite code may be wrong', 3000); return;
     }
-
-    // Validate expiry
-    if (Date.now() > payload.expires) {
-      showToast('❌ Invite code expired — ask owner to generate a new one', 3000); return;
-    }
-
-    // Extract family key
-    const keyBytes = Uint8Array.from(atob(payload.keyB64), c => c.charCodeAt(0));
-
-    // Get member name
-    const memberName = document.getElementById('mf-family-member-name')?.value.trim() ||
-                       data._fhsProfile?.name || 'Member';
-
-    showToast('🔗 Joining family…', 2000);
-
-    // Add self to manifest on owner's Drive
-    const manifest = await mfFamilyDecrypt(
-      await mfDriveReadFamilyFileById(payload.folderId, MF_MANIFEST_FILE) || '',
-      keyBytes
-    );
-    if (!manifest) { showToast('❌ Could not read family data — check code', 3000); return; }
 
     const activeCount = (manifest.members || []).filter(m => m.status === 'active').length;
     if (activeCount >= MF_MAX_MEMBERS) {
       showToast(`🚫 Family is full (max ${MF_MAX_MEMBERS} members)`, 3000); return;
     }
 
-    // Add new member
     const memberId = 'mbr_' + Date.now();
     manifest.members.push({
-      uid: memberId,
-      name: memberName,
-      role: 'member',
-      joinedAt: new Date().toISOString(),
-      status: 'active'
+      uid: memberId, name: memberName, role: 'member',
+      joinedAt: new Date().toISOString(), status: 'active'
     });
 
-    // Write updated manifest back
     const updatedB64 = await mfFamilyEncrypt(manifest, keyBytes);
-    await mfDriveWriteFamilyFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
+    await mfWriteSharedFolderFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
 
-    // Save locally
     mfSaveFamilyKey(keyBytes);
     mfSaveFamilyMeta({
-      familyId: payload.familyId,
-      folderId: payload.folderId,
-      role: 'member',
-      ownerName: payload.ownerName,
-      myUid: memberId,
-      myName: memberName
+      familyId: payload.familyId, folderId: payload.folderId,
+      role: 'member', ownerName: payload.ownerName,
+      myUid: memberId, myName: memberName
     });
 
     mfHideFamilyModal();
@@ -39362,11 +39406,9 @@ window.mfFamilyJoin = async function() {
     renderFamilyPanel();
   } catch(e) {
     console.error('Join error:', e);
-    showToast('❌ Failed to join: ' + e.message, 3000);
+    showToast('❌ Join failed: ' + e.message, 3000);
   }
 };
-
-// ── REMOVE MEMBER (Owner only) ─────────────────────────────────────
 window.mfFamilyRemoveMember = async function(uid, name) {
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
