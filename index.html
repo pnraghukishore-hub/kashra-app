@@ -39219,19 +39219,28 @@ async function mfWriteSharedFolderFile(folderId, fileName, b64Content) {
   return (await resp.json()).id;
 }
 
-// Read manifest directly by file ID (no Drive search — works cross-user)
+// Read manifest directly by file ID using public URL (no auth needed — file is set to public)
 async function mfReadManifestById(fileId, keyBytes) {
-  console.log('[MF Family] Reading manifest by fileId:', fileId);
-  const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-    { headers: { Authorization: 'Bearer ' + window._driveToken } }
-  );
-  if (!resp.ok) {
-    console.error('[MF Family] Read by ID failed:', resp.status, await resp.text());
+  console.log('[MF Family] Reading manifest by fileId (public URL):', fileId);
+  // Use Drive's export/download URL which works for publicly shared files
+  const publicUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  try {
+    const resp = await fetch(publicUrl);
+    if (!resp.ok) {
+      console.error('[MF Family] Public URL fetch failed:', resp.status);
+      return null;
+    }
+    const text = await resp.text();
+    // Drive sometimes returns an HTML confirmation page for large files
+    if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+      console.error('[MF Family] Got HTML instead of data — file may not be public');
+      return null;
+    }
+    return mfFamilyDecrypt(text.trim(), keyBytes);
+  } catch(e) {
+    console.error('[MF Family] Public URL fetch error:', e);
     return null;
   }
-  const b64 = await resp.text();
-  return mfFamilyDecrypt(b64.trim(), keyBytes);
 }
 
 async function mfWriteManifestById(fileId, keyBytes, manifest) {
@@ -39268,7 +39277,7 @@ async function mfWriteManifest(folderId, keyBytes, manifest) {
       await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'writer', type: 'anyone' })
+        body: JSON.stringify({ role: 'reader', type: 'anyone' })
       });
     } catch(e) { /* permission already set */ }
   }
@@ -39367,9 +39376,9 @@ window.mfFamilyShowInvite = async function() {
         await fetch(`https://www.googleapis.com/drive/v3/files/${manifestFileId}/permissions`, {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'writer', type: 'anyone' })
+          body: JSON.stringify({ role: 'reader', type: 'anyone' })
         });
-        console.log('[MF Family] manifestFileId resolved and cached:', manifestFileId);
+        console.log('[MF Family] manifestFileId resolved, cached and set public:', manifestFileId);
       }
     } catch(e) { console.warn('[MF Family] Could not resolve manifestFileId:', e); }
   }
