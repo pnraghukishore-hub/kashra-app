@@ -39431,6 +39431,15 @@ async function mfDriveInitWithUID() {
   const setup = localStorage.getItem(MF_SETUP_KEY);
   if (setup === 'skipped') return;
 
+  // ── CAPACITOR HOOK ─────────────────────────────────────────────
+  // Phase A: Replace this block with Capacitor native flow:
+  //   1. window.Capacitor?.Plugins?.BiometricAuth?.verify()
+  //   2. window.Capacitor?.Plugins?.GoogleAuth?.getToken() → _driveToken
+  //   3. Skip GIS token client entirely
+  // Everything below (passphrase unlock + OAuth) becomes:
+  //   mfCapacitorAutoConnect() → calls OAuth callback directly
+  // ──────────────────────────────────────────────────────────────
+
   if (setup === 'done') {
     const stored = await mfLoadStoredPassphrase();
     if (stored) {
@@ -39438,19 +39447,23 @@ async function mfDriveInitWithUID() {
       console.log('[MF Drive] Auto-unlocked silently');
       mfInitTokenClient();
 
-      // Auto-connect Drive and restore latest data seamlessly
+      // Try silent connect — works on desktop Chrome (same Google account)
+      // On mobile Safari falls back to select_account prompt (one tap)
       let _attempts = 0;
       const _tryConnect = () => {
         if (_tokenClient) {
+          // Show subtle loading indicator so user knows something is happening
+          showSyncStatus('☁️ Connecting to Drive…', '#3B9EFF', 8000);
           mfRequestDriveToken();
-          // After token granted, restore Drive data silently + re-render
-          // The OAuth callback handles this via _mfJustSetup=false path
-        } else if (_attempts < 5) {
+        } else if (_attempts < 8) {
           _attempts++;
-          setTimeout(_tryConnect, 800);
+          setTimeout(_tryConnect, 600);
+        } else {
+          // GIS failed to load — show manual connect nudge
+          showSyncStatus('☁️ Tap "Connect Drive" in Settings to restore data', '#F59E0B', 6000);
         }
       };
-      setTimeout(_tryConnect, 600);
+      setTimeout(_tryConnect, 500);
 
       // 30-day reminder
       if (mfShouldShowReminder()) {
@@ -39460,14 +39473,15 @@ async function mfDriveInitWithUID() {
         }, 5000);
       }
     } else {
-      // No stored passphrase on this device — ask once
+      // No stored passphrase — first time on this device
+      // Show passphrase modal once then never again
       if (!window._mfPassphraseShown) {
         window._mfPassphraseShown = true;
         setTimeout(() => mfShowPassphraseModal('unlock'), 1200);
       }
     }
   } else {
-    // Never set up — prompt setup
+    // First ever launch — guide through setup
     if (!window._mfPassphraseShown) {
       window._mfPassphraseShown = true;
       setTimeout(() => mfShowPassphraseModal('setup'), 2000);
