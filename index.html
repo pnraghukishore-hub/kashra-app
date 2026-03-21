@@ -38548,7 +38548,13 @@ async function mfEncrypt(obj, passphrase) {
   combined.set(salt, 0);
   combined.set(iv, 16);
   combined.set(new Uint8Array(cipher), 28);
-  return btoa(String.fromCharCode(...combined));
+  // Convert to base64 in chunks — spread (...combined) causes stack overflow on large datasets
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < combined.length; i += chunkSize) {
+    binary += String.fromCharCode(...combined.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 async function mfDecrypt(b64, passphrase) {
