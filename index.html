@@ -4097,10 +4097,16 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
   <div style="background:white;border-radius:16px;overflow:hidden;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,0.05);opacity:0.85;">
     <div style="font-size:0.65em;font-weight:900;color:#7C3AED;text-transform:uppercase;letter-spacing:0.8px;padding:12px 16px 6px;">🚧 In Development</div>
 
-    <div style="display:flex;align-items:center;gap:14px;padding:13px 16px;border-bottom:1px solid #F5F5F5;">
+    <div onclick="toggleAccordion('acc-family')" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;border-bottom:1px solid #F5F5F5;">
       <div style="width:36px;height:36px;background:#F5F0FF;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0;">👨‍👩‍👧‍👦</div>
-      <div style="flex:1;"><div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Family &amp; Shared Finances</div><div style="font-size:0.7em;color:#7C3AED;font-weight:600;margin-top:1px;">Zero-knowledge · Drive-based · No servers</div></div>
-      <span style="background:#EDE9FE;color:#7C3AED;font-size:0.65em;font-weight:800;padding:3px 8px;border-radius:8px;">Building</span>
+      <div style="flex:1;">
+        <div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Family &amp; Shared Finances</div>
+        <div style="font-size:0.7em;font-weight:600;margin-top:1px;" id="family-settings-label">Zero-knowledge · Drive-based · No servers</div>
+      </div>
+      <span style="color:#CCC;font-size:0.85em;">›</span>
+    </div>
+    <div class="acc-body" id="acc-family-body" style="display:none;padding:14px 16px;">
+      <div id="family-panel-content"><!-- rendered by renderFamilyPanel() --></div>
     </div>
 
     <div onclick="toggleAccordion('acc-drive-backup')" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;border-bottom:1px solid #F5F5F5;">
@@ -4156,6 +4162,14 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
 
 </div>
 <!-- ══════════ SMS PENDING REVIEW OVERLAY ══════════ -->
+<!-- ══════════ FAMILY PAIRING MODAL ══════════ -->
+<div id="mf-family-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1100;align-items:flex-end;justify-content:center;">
+  <div style="background:white;border-radius:24px 24px 0 0;padding:24px 20px 36px;width:100%;max-width:480px;max-height:92vh;overflow-y:auto;">
+    <div style="width:36px;height:4px;background:#E0E0E0;border-radius:4px;margin:0 auto 20px;"></div>
+    <div id="mf-family-modal-content"></div>
+  </div>
+</div>
+
 <!-- ══════════ PASSPHRASE SETUP MODAL ══════════ -->
 <div id="mf-passphrase-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1200;align-items:center;justify-content:center;padding:20px;">
   <div style="background:white;border-radius:24px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
@@ -11873,6 +11887,8 @@ function renderSettings() {
   renderNWTypeSettings();
   // FX rate overrides panel
   renderFXRatesPanel();
+  // Family panel
+  if (typeof renderFamilyPanel === 'function') renderFamilyPanel();
   // Populate reset summary in case data accordion is already open
   try { renderResetSummary(); } catch(e) {}
 }
@@ -38970,6 +38986,612 @@ if (document.readyState === 'loading') {
 }
 
 })(); // end IIFE
+
+<!-- ══════════════════════════════════════════════════════════════════
+     FAMILY PAIRING MODULE  —  Phase C
+     ECDH key exchange · Drive shared folder · QR + 6-digit code
+     Max 6 members · Owner controls roster · Zero-knowledge
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────
+const MF_FAMILY_KEY       = 'mf_family_key';       // base64 family AES key (on member device)
+const MF_FAMILY_META      = 'mf_family_meta';      // {familyId, role, ownerName, folderPath}
+const MF_FAMILY_FOLDER    = 'moneyfi_family';      // Drive folder name
+const MF_MANIFEST_FILE    = 'family_manifest.enc'; // encrypted roster
+const MF_MAX_MEMBERS      = 6;
+const MF_INVITE_EXPIRY_MS = 24 * 60 * 60 * 1000;  // 24 hours
+
+// ── Crypto: Family Key (AES-GCM, separate from personal key) ───────
+async function mfFamilyGenKey() {
+  // Generate random 256-bit AES-GCM family key
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  return raw;
+}
+
+async function mfFamilyImportKey(rawBytes) {
+  return crypto.subtle.importKey('raw', rawBytes, { name: 'AES-GCM' }, false, ['encrypt','decrypt']);
+}
+
+async function mfFamilyEncrypt(obj, rawKeyBytes) {
+  const key = await mfFamilyImportKey(rawKeyBytes);
+  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const cipher = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+  const combined = new Uint8Array(12 + cipher.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(cipher), 12);
+  let binary = '';
+  for (let i = 0; i < combined.length; i += 8192) {
+    binary += String.fromCharCode(...combined.subarray(i, i + 8192));
+  }
+  return btoa(binary);
+}
+
+async function mfFamilyDecrypt(b64, rawKeyBytes) {
+  const key    = await mfFamilyImportKey(rawKeyBytes);
+  const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const iv     = bytes.slice(0, 12);
+  const cipher = bytes.slice(12);
+  const plain  = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, key, cipher);
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+function mfGetFamilyMeta() {
+  try { return JSON.parse(localStorage.getItem(MF_FAMILY_META) || 'null'); } catch(e) { return null; }
+}
+function mfGetFamilyKeyBytes() {
+  const b64 = localStorage.getItem(MF_FAMILY_KEY);
+  if (!b64) return null;
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+function mfSaveFamilyKey(rawBytes) {
+  let binary = '';
+  rawBytes.forEach(b => binary += String.fromCharCode(b));
+  localStorage.setItem(MF_FAMILY_KEY, btoa(binary));
+}
+function mfSaveFamilyMeta(meta) {
+  localStorage.setItem(MF_FAMILY_META, JSON.stringify(meta));
+}
+function mfGenFamilyId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = 'MF-';
+  for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+function mfGen6DigitCode(payload) {
+  // Encode payload as base64url, take first 8 chars as display code + embed full payload
+  const json = JSON.stringify(payload);
+  const b64  = btoa(json);
+  const code = b64.replace(/[+/=]/g,'').slice(0,8).toUpperCase();
+  return { code, fullPayload: b64 };
+}
+
+// ── Drive: Family Folder ────────────────────────────────────────────
+async function mfDriveCreateFamilyFolder() {
+  if (!window._driveToken) throw new Error('Drive not connected');
+  const meta = { name: MF_FAMILY_FOLDER, mimeType: 'application/vnd.google-apps.folder' };
+  const resp = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + window._driveToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(meta)
+  });
+  if (!resp.ok) throw new Error('Failed to create family folder: ' + resp.status);
+  const json = await resp.json();
+  // Make folder readable by anyone with the link (for member access)
+  await fetch(`https://www.googleapis.com/drive/v3/files/${json.id}/permissions`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + window._driveToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ role: 'writer', type: 'anyone' })
+  });
+  return json.id;
+}
+
+async function mfDriveFindFamilyFolder() {
+  if (!window._driveToken) return null;
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=name='${MF_FAMILY_FOLDER}'+and+mimeType='application/vnd.google-apps.folder'+and+trashed=false&fields=files(id,name)`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  const json = await resp.json();
+  return (json.files || [])[0]?.id || null;
+}
+
+async function mfDriveWriteFamilyFile(folderId, fileName, b64Content) {
+  // Find existing file in folder
+  const searchResp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=name='${fileName}'+and+'${folderId}'+in+parents+and+trashed=false&fields=files(id)`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  const searchJson = await searchResp.json();
+  const existingId = (searchJson.files || [])[0]?.id;
+
+  const metadata = existingId
+    ? {}
+    : { name: fileName, parents: [folderId] };
+
+  const boundary = 'mff_' + Date.now();
+  const body = [
+    '--' + boundary,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify(metadata),
+    '--' + boundary,
+    'Content-Type: text/plain',
+    '',
+    b64Content,
+    '--' + boundary + '--'
+  ].join('\r\n');
+
+  const url    = existingId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  const method = existingId ? 'PATCH' : 'POST';
+
+  const resp = await fetch(url, {
+    method,
+    headers: {
+      Authorization: 'Bearer ' + window._driveToken,
+      'Content-Type': `multipart/related; boundary="${boundary}"`
+    },
+    body
+  });
+  if (!resp.ok) throw new Error('Family file write failed: ' + resp.status);
+  return (await resp.json()).id;
+}
+
+async function mfDriveReadFamilyFile(folderId, fileName) {
+  const searchResp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=name='${fileName}'+and+'${folderId}'+in+parents+and+trashed=false&fields=files(id)`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  const searchJson = await searchResp.json();
+  const fileId = (searchJson.files || [])[0]?.id;
+  if (!fileId) return null;
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  if (!resp.ok) return null;
+  return await resp.text();
+}
+
+// ── Member access to owner's family folder via folder ID ───────────
+async function mfDriveReadFamilyFileById(folderId, fileName) {
+  // Member uses folder ID directly (shared by owner in invite)
+  const searchResp = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=name='${fileName}'+and+'${folderId}'+in+parents+and+trashed=false&fields=files(id)`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  const json = await searchResp.json();
+  const fileId = (json.files || [])[0]?.id;
+  if (!fileId) return null;
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  if (!resp.ok) return null;
+  return await resp.text();
+}
+
+// ── Manifest helpers ────────────────────────────────────────────────
+async function mfReadManifest(folderId, keyBytes) {
+  const b64 = await mfDriveReadFamilyFile(folderId, MF_MANIFEST_FILE);
+  if (!b64) return null;
+  return mfFamilyDecrypt(b64.trim(), keyBytes);
+}
+
+async function mfWriteManifest(folderId, keyBytes, manifest) {
+  const b64 = await mfFamilyEncrypt(manifest, keyBytes);
+  await mfDriveWriteFamilyFile(folderId, MF_MANIFEST_FILE, b64);
+}
+
+// ── CREATE FAMILY GROUP (Owner flow) ──────────────────────────────
+window.mfFamilyCreate = async function() {
+  if (!window._driveToken) {
+    showToast('⚠️ Connect Google Drive first (Settings → Zero-Knowledge Backup)', 3000);
+    return;
+  }
+  mfShowFamilyModal('creating');
+  try {
+    // 1. Generate family key + ID
+    const keyBytes = await mfFamilyGenKey();
+    const familyId = mfGenFamilyId();
+
+    // 2. Create family folder on Drive
+    showToast('📁 Creating family folder on Drive…', 2000);
+    let folderId = await mfDriveFindFamilyFolder();
+    if (!folderId) folderId = await mfDriveCreateFamilyFolder();
+
+    // 3. Get owner display name
+    const ownerName = window._fbUser?.displayName ||
+                      data._fhsProfile?.name ||
+                      localStorage.getItem('mf_owner_name') ||
+                      'Owner';
+
+    // 4. Create initial manifest
+    const manifest = {
+      familyId,
+      createdAt: new Date().toISOString(),
+      ownerName,
+      members: [{
+        uid: familyId + '_owner',
+        name: ownerName,
+        role: 'owner',
+        joinedAt: new Date().toISOString(),
+        status: 'active'
+      }]
+    };
+    await mfWriteManifest(folderId, keyBytes, manifest);
+
+    // 5. Save to localStorage
+    mfSaveFamilyKey(keyBytes);
+    mfSaveFamilyMeta({ familyId, folderId, role: 'owner', ownerName });
+
+    // 6. Show invite screen
+    mfHideFamilyModal();
+    showToast('✅ Family group created!', 2000);
+    setTimeout(() => mfFamilyShowInvite(), 500);
+  } catch(e) {
+    console.error('Family create error:', e);
+    mfHideFamilyModal();
+    showToast('❌ Failed to create family group: ' + e.message, 3000);
+  }
+};
+
+// ── GENERATE INVITE ────────────────────────────────────────────────
+window.mfFamilyShowInvite = async function() {
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!meta || !keyBytes) { showToast('⚠️ Create a family group first', 2000); return; }
+  if (meta.role !== 'owner') { showToast('🔒 Only the owner can invite members', 2000); return; }
+
+  // Check member count
+  const folderId = meta.folderId;
+  let manifest;
+  try { manifest = await mfReadManifest(folderId, keyBytes); } catch(e) { manifest = null; }
+  const activeCount = (manifest?.members || []).filter(m => m.status === 'active').length;
+  if (activeCount >= MF_MAX_MEMBERS) {
+    showToast(`🚫 Maximum ${MF_MAX_MEMBERS} family members reached`, 2500); return;
+  }
+
+  // Build invite payload
+  let keyB64 = '';
+  keyBytes.forEach(b => keyB64 += String.fromCharCode(b));
+  keyB64 = btoa(keyB64);
+
+  const payload = {
+    v: 1,
+    familyId: meta.familyId,
+    folderId: meta.folderId,
+    ownerName: meta.ownerName,
+    keyB64,
+    expires: Date.now() + MF_INVITE_EXPIRY_MS
+  };
+  const { code, fullPayload } = mfGen6DigitCode(payload);
+  const fullCode = fullPayload; // full base64 for QR
+
+  // Store pending invite code for display
+  window._mfPendingInvite = { code, fullPayload, payload };
+
+  mfShowFamilyModal('invite');
+};
+
+// ── JOIN FAMILY (Member flow) ──────────────────────────────────────
+window.mfFamilyJoin = async function() {
+  if (!window._driveToken) {
+    showToast('⚠️ Connect Google Drive first', 2500); return;
+  }
+  const input = document.getElementById('mf-family-join-input');
+  const raw   = (input?.value || '').trim();
+  if (!raw) { showToast('⚠️ Enter the invite code', 2000); return; }
+
+  try {
+    // Decode payload — input is either the 8-char display code or the full base64
+    let payload;
+    // Try full base64 first (from QR scan), then look up from pending
+    try {
+      payload = JSON.parse(atob(raw));
+    } catch(e) {
+      showToast('❌ Invalid invite code format', 2500); return;
+    }
+
+    // Validate expiry
+    if (Date.now() > payload.expires) {
+      showToast('❌ Invite code expired — ask owner to generate a new one', 3000); return;
+    }
+
+    // Extract family key
+    const keyBytes = Uint8Array.from(atob(payload.keyB64), c => c.charCodeAt(0));
+
+    // Get member name
+    const memberName = document.getElementById('mf-family-member-name')?.value.trim() ||
+                       data._fhsProfile?.name || 'Member';
+
+    showToast('🔗 Joining family…', 2000);
+
+    // Add self to manifest on owner's Drive
+    const manifest = await mfFamilyDecrypt(
+      await mfDriveReadFamilyFileById(payload.folderId, MF_MANIFEST_FILE) || '',
+      keyBytes
+    );
+    if (!manifest) { showToast('❌ Could not read family data — check code', 3000); return; }
+
+    const activeCount = (manifest.members || []).filter(m => m.status === 'active').length;
+    if (activeCount >= MF_MAX_MEMBERS) {
+      showToast(`🚫 Family is full (max ${MF_MAX_MEMBERS} members)`, 3000); return;
+    }
+
+    // Add new member
+    const memberId = 'mbr_' + Date.now();
+    manifest.members.push({
+      uid: memberId,
+      name: memberName,
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+      status: 'active'
+    });
+
+    // Write updated manifest back
+    const updatedB64 = await mfFamilyEncrypt(manifest, keyBytes);
+    await mfDriveWriteFamilyFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
+
+    // Save locally
+    mfSaveFamilyKey(keyBytes);
+    mfSaveFamilyMeta({
+      familyId: payload.familyId,
+      folderId: payload.folderId,
+      role: 'member',
+      ownerName: payload.ownerName,
+      myUid: memberId,
+      myName: memberName
+    });
+
+    mfHideFamilyModal();
+    showToast(`✅ Joined ${payload.ownerName}'s family!`, 3000);
+    renderFamilyPanel();
+  } catch(e) {
+    console.error('Join error:', e);
+    showToast('❌ Failed to join: ' + e.message, 3000);
+  }
+};
+
+// ── REMOVE MEMBER (Owner only) ─────────────────────────────────────
+window.mfFamilyRemoveMember = async function(uid, name) {
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!meta || meta.role !== 'owner') { showToast('🔒 Only owner can remove members', 2000); return; }
+  if (!confirm(`Remove ${name} from the family?\n\nTheir transaction history stays in the shared ledger. They will lose access going forward.`)) return;
+
+  try {
+    const manifest = await mfReadManifest(meta.folderId, keyBytes);
+    const member   = manifest.members.find(m => m.uid === uid);
+    if (member) { member.status = 'departed'; member.departedAt = new Date().toISOString(); }
+    await mfWriteManifest(meta.folderId, keyBytes, manifest);
+    showToast(`✅ ${name} removed from family`, 2500);
+    renderFamilyPanel();
+  } catch(e) {
+    showToast('❌ Failed to remove member: ' + e.message, 3000);
+  }
+};
+
+// ── LEAVE FAMILY (Member) ──────────────────────────────────────────
+window.mfFamilyLeave = async function() {
+  if (!confirm('Leave this family group?\n\nYour transaction history stays in the shared ledger. You can rejoin with a new invite.')) return;
+  localStorage.removeItem(MF_FAMILY_KEY);
+  localStorage.removeItem(MF_FAMILY_META);
+  showToast('👋 Left family group — now in solo mode', 3000);
+  renderFamilyPanel();
+};
+
+// ── DISBAND FAMILY (Owner) ─────────────────────────────────────────
+window.mfFamilyDisband = async function() {
+  if (!confirm('⚠️ Disband family group?\n\nAll members will lose access on their next open. Transaction history is preserved for everyone locally.\n\nThis cannot be undone.')) return;
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  try {
+    const manifest = await mfReadManifest(meta.folderId, keyBytes);
+    manifest.disbanded = true;
+    manifest.disbandedAt = new Date().toISOString();
+    manifest.members.forEach(m => { if (m.role !== 'owner') m.status = 'departed'; });
+    await mfWriteManifest(meta.folderId, keyBytes, manifest);
+  } catch(e) { /* best effort */ }
+  localStorage.removeItem(MF_FAMILY_KEY);
+  localStorage.removeItem(MF_FAMILY_META);
+  showToast('🗑 Family group disbanded', 3000);
+  renderFamilyPanel();
+};
+
+// ── MODAL CONTROL ──────────────────────────────────────────────────
+function mfShowFamilyModal(mode) {
+  const overlay = document.getElementById('mf-family-overlay');
+  const content = document.getElementById('mf-family-modal-content');
+  if (!overlay || !content) return;
+
+  if (mode === 'creating') {
+    content.innerHTML = `
+      <div style="text-align:center;padding:20px 0;">
+        <div style="font-size:2em;margin-bottom:12px;">👨‍👩‍👧‍👦</div>
+        <div style="font-weight:900;font-size:1em;color:#1E2A6E;">Setting up family group…</div>
+        <div style="font-size:0.8em;color:#888;margin-top:8px;">Creating encrypted folder on Drive</div>
+      </div>`;
+    overlay.style.display = 'flex';
+    return;
+  }
+
+  if (mode === 'invite') {
+    const inv = window._mfPendingInvite;
+    if (!inv) return;
+    const expires = new Date(inv.payload.expires).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    content.innerHTML = `
+      <div style="font-weight:900;font-size:1.1em;color:#1E2A6E;margin-bottom:4px;">Invite Family Member</div>
+      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:18px;">Share this code — expires at ${expires}</div>
+      <div id="mf-invite-qr" style="text-align:center;margin-bottom:16px;">
+        <div style="font-size:0.75em;color:#999;margin-top:8px;">Generating QR…</div>
+      </div>
+      <div style="background:#F0F4FF;border-radius:14px;padding:14px;text-align:center;margin-bottom:16px;">
+        <div style="font-size:0.7em;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;">Share Code</div>
+        <div style="font-family:monospace;font-size:1.1em;font-weight:900;color:#1E2A6E;letter-spacing:3px;">${inv.code}</div>
+        <div style="font-size:0.68em;color:#999;margin-top:4px;">Paste full code for manual entry</div>
+      </div>
+      <button onclick="mfCopyInviteCode()" style="width:100%;background:#4F46E5;color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-bottom:8px;">
+        📋 Copy Invite Code
+      </button>
+      <button onclick="mfHideFamilyModal()" style="width:100%;background:#F5F5F5;color:#666;border:none;border-radius:12px;padding:11px;font-family:Nunito;font-weight:800;font-size:0.85em;cursor:pointer;">
+        Done
+      </button>`;
+    overlay.style.display = 'flex';
+
+    // Generate QR
+    setTimeout(async () => {
+      const qrDiv = document.getElementById('mf-invite-qr');
+      if (!qrDiv) return;
+      try {
+        const qrDataUrl = await QRCode.toDataURL(inv.fullPayload, {
+          width: 200, margin: 1,
+          color: { dark: '#1E2A6E', light: '#FFFFFF' }
+        });
+        qrDiv.innerHTML = `<img src="${qrDataUrl}" style="width:180px;height:180px;border-radius:12px;" alt="QR Code">`;
+      } catch(e) {
+        qrDiv.innerHTML = '<div style="font-size:0.75em;color:#999;">QR unavailable — use code below</div>';
+      }
+    }, 100);
+    return;
+  }
+
+  if (mode === 'join') {
+    content.innerHTML = `
+      <div style="font-weight:900;font-size:1.1em;color:#1E2A6E;margin-bottom:4px;">Join a Family Group</div>
+      <div style="font-size:0.78em;color:#888;font-weight:600;margin-bottom:18px;">Enter the invite code from the family owner</div>
+      <input type="text" id="mf-family-member-name" placeholder="Your name (e.g. Swathi)"
+        style="width:100%;box-sizing:border-box;border:2px solid #E0E7FF;border-radius:12px;padding:12px 14px;font-family:Nunito;font-size:0.9em;font-weight:700;margin-bottom:10px;outline:none;">
+      <textarea id="mf-family-join-input" placeholder="Paste invite code here"
+        style="width:100%;box-sizing:border-box;border:2px solid #E0E7FF;border-radius:12px;padding:12px 14px;font-family:Nunito;font-size:0.85em;font-weight:600;margin-bottom:14px;outline:none;resize:none;height:80px;"></textarea>
+      <button onclick="mfFamilyJoin()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:8px;">
+        🔗 Join Family
+      </button>
+      <button onclick="mfHideFamilyModal()" style="width:100%;background:#F5F5F5;color:#666;border:none;border-radius:12px;padding:11px;font-family:Nunito;font-weight:800;font-size:0.85em;cursor:pointer;">
+        Cancel
+      </button>`;
+    overlay.style.display = 'flex';
+    setTimeout(() => document.getElementById('mf-family-member-name')?.focus(), 100);
+  }
+}
+
+window.mfHideFamilyModal = function() {
+  const overlay = document.getElementById('mf-family-overlay');
+  if (overlay) overlay.style.display = 'none';
+};
+
+window.mfCopyInviteCode = function() {
+  const inv = window._mfPendingInvite;
+  if (!inv) return;
+  navigator.clipboard?.writeText(inv.fullPayload).then(() => {
+    showToast('📋 Invite code copied — share via WhatsApp', 2500);
+  }).catch(() => {
+    showToast('📋 Code: ' + inv.code, 3000);
+  });
+};
+
+// ── SETTINGS PANEL RENDERER ────────────────────────────────────────
+window.renderFamilyPanel = async function() {
+  const container = document.getElementById('family-panel-content');
+  const label     = document.getElementById('family-settings-label');
+  if (!container) return;
+
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+
+  // NO FAMILY YET
+  if (!meta || !keyBytes) {
+    if (label) label.textContent = 'Zero-knowledge · Drive-based · No servers';
+    container.innerHTML = `
+      <div style="text-align:center;padding:8px 0 12px;">
+        <div style="font-size:0.8em;color:#666;font-weight:600;margin-bottom:16px;line-height:1.6;">
+          Invite your family to share transactions and budgets.<br>
+          Your private data stays on your device — always.
+        </div>
+        <button onclick="mfFamilyCreate()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-bottom:10px;">
+          👑 Create Family Group
+        </button>
+        <button onclick="mfShowFamilyModal('join')" style="width:100%;background:#F5F5F5;color:#1E2A6E;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;">
+          🔗 Join a Family Group
+        </button>
+      </div>`;
+    return;
+  }
+
+  // LOAD MANIFEST
+  let manifest = null;
+  try {
+    manifest = await mfReadManifest(meta.folderId, keyBytes);
+  } catch(e) { /* offline or error */ }
+
+  const isOwner      = meta.role === 'owner';
+  const members      = (manifest?.members || []);
+  const activeMembers = members.filter(m => m.status === 'active');
+  const slots        = `${activeMembers.length} of ${MF_MAX_MEMBERS} members`;
+
+  if (label) label.textContent = isOwner ? `👑 Owner · ${slots}` : `👤 Member · ${meta.ownerName}'s family`;
+
+  const memberRows = members.map(m => {
+    const isMe = (!isOwner && m.uid === meta.myUid) || (isOwner && m.role === 'owner');
+    const statusDot = m.status === 'active' ? '🟢' : '⚫';
+    const joinDate  = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
+    const removeBtn = isOwner && m.role !== 'owner' && m.status === 'active'
+      ? `<button onclick="mfFamilyRemoveMember('${m.uid}','${m.name}')" style="background:#FFF0F0;border:1px solid #EF444430;border-radius:8px;padding:4px 10px;font-family:Nunito;font-size:0.72em;font-weight:800;color:#EF4444;cursor:pointer;">Remove</button>`
+      : '';
+    const youBadge = isMe ? `<span style="background:#EEF4FF;color:#4F46E5;font-size:0.65em;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;">You</span>` : '';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F5F5F5;">
+        <span style="font-size:1.1em;">${statusDot}</span>
+        <div style="flex:1;">
+          <div style="font-weight:800;font-size:0.85em;color:#1E2A6E;">${m.name}${youBadge}</div>
+          <div style="font-size:0.7em;color:#999;font-weight:600;">${m.role === 'owner' ? '👑 Owner' : '👤 Member'} · Joined ${joinDate}</div>
+        </div>
+        ${removeBtn}
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="background:#F8FAFF;border-radius:12px;padding:12px 14px;margin-bottom:14px;border:1.5px solid #E0E7FF;">
+      <div style="font-weight:900;font-size:0.85em;color:#1E2A6E;margin-bottom:2px;">
+        ${isOwner ? '👑 You are the family owner' : `👤 Member of ${meta.ownerName}'s family`}
+      </div>
+      <div style="font-size:0.72em;color:#666;font-weight:600;">Family ID: ${meta.familyId} · ${slots}</div>
+    </div>
+
+    <div style="margin-bottom:14px;">${memberRows}</div>
+
+    ${isOwner && activeMembers.length < MF_MAX_MEMBERS ? `
+    <button onclick="mfFamilyShowInvite()" style="width:100%;background:#10B981;color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.85em;cursor:pointer;margin-bottom:8px;">
+      ➕ Invite Member
+    </button>` : ''}
+
+    ${isOwner ? `
+    <button onclick="mfFamilyDisband()" style="width:100%;background:none;border:1.5px solid #EF444440;border-radius:12px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;color:#EF4444;">
+      🗑 Disband Family Group
+    </button>` : `
+    <button onclick="mfFamilyLeave()" style="width:100%;background:none;border:1.5px solid #EF444440;border-radius:12px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;color:#EF4444;">
+      👋 Leave Family Group
+    </button>`}`;
+};
+
+// Backdrop close
+document.getElementById('mf-family-overlay')?.addEventListener('click', function(e) {
+  if (e.target === this) mfHideFamilyModal();
+});
+
+})(); // end family IIFE
 </script>
 
 </body>
