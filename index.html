@@ -38215,6 +38215,99 @@ const DISC_THEMES = [
           setTimeout(()=>{ _discSpotlight('#ai-fab','Tap ✨ to open your personal AI Financial Advisor — powered by Claude. Ask anything about your portfolio, goals, FHS score, or spending.','AI Advisor'); openAIAdvisor(); }, 350); }
       }, 300); },
       spot:'#ai-fab', tip:'Tap ✨ for your AI Financial Advisor — ask anything about your money.' },
+  ]},
+
+  { id:'privacy_security', name:'Privacy & Security', emoji:'🔐', color:'#7C3AED', features:[
+
+    { id:'privacy_mode',
+      label:'Privacy Mode',
+      nav:()=>{ const btn=document.getElementById('home-privacy-btn');
+        if(btn){ btn.scrollIntoView({behavior:'smooth',block:'center'});
+          setTimeout(()=>_discSpotlight('#home-privacy-btn','Tap the eye icon to hide all amounts globally — Home, Net Worth, everywhere. Great for public places or screen sharing.','Privacy Mode'), 350); }
+        else { switchScreen('networth',document.querySelectorAll('.nav-item')[3]);
+          setTimeout(()=>_discSpotlight('#nw-eye-btn','Tap the eye to hide all balances globally.','Privacy Mode'), 600); }
+      },
+      spot:'#home-privacy-btn', tip:'Eye icon hides all amounts globally — one tap, everything private.' },
+
+    { id:'drive_backup_disc',
+      label:'Zero-Knowledge Backup',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-drive-backup"]');
+          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>{ _discSpotlight(el,'Your data is AES-256 encrypted on YOUR Google Drive. Not even MoneyFi can read it. Auto-backs up 5 seconds after every save.','Zero-Knowledge Backup'); el.click(); }, 350); }
+        }, 500); },
+      spot:'[onclick*="acc-drive-backup"]', tip:'AES-256 encrypted on your own Drive — MoneyFi sees nothing.' },
+
+    { id:'drive_status_disc',
+      label:'Backup Status Badge',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-drive-backup"]');
+          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>_discSpotlight(el,'The badge on Zero-Knowledge Backup shows status at a glance — ✅ Synced, ⚠️ Failed, or 📵 Offline. Tap to see last backup time and retry.','Backup Status'), 400);
+          }
+        }, 500); },
+      spot:'[onclick*="acc-drive-backup"]', tip:'Status badge shows backup health — synced, failed, or offline.' },
+
+  ]},
+
+  { id:'family_shared', name:'Family & Shared Finances', emoji:'👨‍👩‍👧‍👦', color:'#3730A3', features:[
+
+    { id:'family_create_disc',
+      label:'Create Family Group',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
+          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>{ _discSpotlight(el,'Create a private encrypted family group. Each member keeps their own data; you only share what you choose.','Create Family Group'); el.click(); }, 350); }
+        }, 500); },
+      spot:'[onclick*="acc-family"]', tip:'Create a private family group — share only what you choose.' },
+
+    { id:'family_invite_disc',
+      label:'Invite Members',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
+          if(el){ el.click();
+            setTimeout(()=>{ const invBtn=document.querySelector('[onclick*="mfFamilyShowInvite"]');
+              if(invBtn) _discSpotlight(invBtn,'Tap Invite Member — share the QR code or invite link. Expires in 24 hours for security.','Invite Members');
+            }, 400); }
+        }, 500); },
+      spot:'[onclick*="mfFamilyShowInvite"]', tip:'Invite via QR code or link — expires in 24 hours for security.' },
+
+    { id:'family_dashboard_disc',
+      label:'Family Dashboard Card',
+      nav:()=>{ const card=document.getElementById('family-dash-card');
+        if(card && card.style.display!=='none'){ card.scrollIntoView({behavior:'smooth',block:'center'});
+          setTimeout(()=>_discSpotlight('#family-dash-card','Family card on Home shows combined household spending and NW. Tap any member chip to see their individual contribution and NW share.','Family Dashboard'), 400);
+        } else { showToast('Join or create a family group first', 2000); }
+      },
+      spot:'#family-dash-card', tip:'Family card shows combined spending, NW, and per-member spotlight.' },
+
+    { id:'family_nw_bulk',
+      label:'Bulk NW Sharing',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.getElementById('family-nw-settings-group');
+          if(el && el.style.display!=='none'){ el.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>_discSpotlight(el,'Family NW Sharing — choose which accounts appear in the household total. Select All or pick individually. Private accounts stay private.','Bulk NW Sharing'), 400);
+          } else { showToast('Join a family group to enable NW sharing', 2000); }
+        }, 500); },
+      spot:'#family-nw-settings-group', tip:'Bulk select which NW accounts family can see — Select All available.' },
+
+    { id:'family_txns_disc',
+      label:'Shared Transactions',
+      nav:()=>{ switchScreen('tx',document.querySelectorAll('.nav-item')[1]);
+        setTimeout(()=>_discSpotlight('#screen-tx','Family transactions appear with author chips — tap a chip to filter and see only one member\'s spending. Real-time sync via Firestore.','Shared Transactions'), 600);
+      },
+      spot:'#screen-tx', tip:'Family txns appear with author chips — tap to filter by member.' },
+
+    { id:'family_key_rotation',
+      label:'Automatic Key Rotation',
+      nav:()=>{ goToScreen('settings');
+        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
+          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>_discSpotlight(el,'When a member is removed, the family encryption key rotates automatically. The removed member loses access; remaining members get the new key silently on next open.','Key Rotation'), 400);
+          }
+        }, 500); },
+      spot:'[onclick*="acc-family"]', tip:'Removing a member auto-rotates the family key — departed member loses access.' },
+
   ]}
 ];
 
