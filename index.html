@@ -39486,7 +39486,10 @@ window.mfShowFamilyModal = function mfShowFamilyModal(mode) {
         <div style="font-size:0.68em;color:#EF4444;font-weight:700;margin-top:6px;">⚠️ Do NOT type the short code — use Copy button below</div>
       </div>
       <button onclick="mfCopyInviteCode()" style="width:100%;background:#4F46E5;color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:8px;">
-        📋 Copy Full Invite Code → Share on WhatsApp
+        📋 Copy Invite Code
+      </button>
+      <button onclick="mfShareInviteWhatsApp()" style="width:100%;background:#25D366;color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:8px;">
+        🟢 Share via WhatsApp
       </button>
       <button onclick="mfHideFamilyModal()" style="width:100%;background:#F5F5F5;color:#666;border:none;border-radius:12px;padding:11px;font-family:Nunito;font-weight:800;font-size:0.85em;cursor:pointer;">
         Done
@@ -39538,11 +39541,43 @@ window.mfHideFamilyModal = function() {
 window.mfCopyInviteCode = function() {
   const inv = window._mfPendingInvite;
   if (!inv) return;
-  navigator.clipboard?.writeText(inv.fullPayload).then(() => {
-    showToast('📋 Invite code copied — share via WhatsApp', 2500);
-  }).catch(() => {
-    showToast('📋 Code: ' + inv.code, 3000);
-  });
+  const text = inv.fullPayload;
+
+  // Try modern clipboard API first
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('📋 Invite code copied! Paste it on WhatsApp for the family member', 3000);
+    }).catch(() => mfCopyFallback(text));
+  } else {
+    mfCopyFallback(text);
+  }
+};
+
+function mfCopyFallback(text) {
+  // Fallback: create hidden textarea, select, copy
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    const ok = document.execCommand('copy');
+    showToast(ok ? '📋 Invite code copied! Paste on WhatsApp' : '⚠️ Copy failed — see code below', 3000);
+  } catch(e) {
+    showToast('⚠️ Copy failed — manually select and copy the code above', 3000);
+  }
+  document.body.removeChild(ta);
+}
+
+// Also expose WhatsApp share directly
+window.mfShareInviteWhatsApp = function() {
+  const inv = window._mfPendingInvite;
+  if (!inv) return;
+  const msg = encodeURIComponent(
+    `Join my KashRA family group!\n\nInvite code (paste into app → Settings → Family → Join):\n\n${inv.fullPayload}\n\nExpires in 24 hours.`
+  );
+  window.open(`https://wa.me/?text=${msg}`, '_blank');
 };
 
 // ── SETTINGS PANEL RENDERER ────────────────────────────────────────
