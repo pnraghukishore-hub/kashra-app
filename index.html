@@ -24188,6 +24188,22 @@ function _nwsBuildForm(type, existing, m) {
       <div class="nws-section-label">Notes</div>
       <input class="nw-sheet-input" id="nws-notes" type="text" placeholder="Optional" value="${m.notes||''}">
     </div>
+    ${(typeof mfGetFamilyMeta === 'function' && mfGetFamilyMeta()) ? `
+    <div class="nw-sheet-field" style="background:#F5F0FF;border-radius:12px;padding:12px 14px;margin-top:4px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-weight:800;font-size:0.85em;color:#1E2A6E;">👨‍👩‍👧‍👦 Visible to Family</div>
+          <div style="font-size:0.7em;color:#666;font-weight:600;margin-top:2px;">Show this account in the household total</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:44px;height:24px;">
+          <input type="checkbox" id="nws-family-visible" style="opacity:0;width:0;height:0;"
+            ${existing?.familyVisible ? 'checked' : ''}>
+          <span onclick="this.previousElementSibling.click()" style="position:absolute;cursor:pointer;inset:0;background:${existing?.familyVisible?'#7C3AED':'#ccc'};border-radius:24px;transition:0.3s;">
+            <span style="position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:white;border-radius:50%;transition:0.3s;transform:${existing?.familyVisible?'translateX(20px)':'translateX(0)'};"></span>
+          </span>
+        </label>
+      </div>
+    </div>` : ''}
   `;
 }
 
@@ -24819,6 +24835,8 @@ function saveNWAccount() {
   if (acct4El && acct4El.value) meta.last4 = acct4El.value.trim();
   const notesEl = document.getElementById('nws-notes');
   if (notesEl && notesEl.value) meta.notes = notesEl.value.trim();
+  const familyVisibleEl = document.getElementById('nws-family-visible');
+  const familyVisible   = familyVisibleEl ? familyVisibleEl.checked : false;
   const dateEl = document.getElementById('nws-date');
   const lastUpdated = dateEl ? dateEl.value : localDateStr();
 
@@ -24863,6 +24881,7 @@ function saveNWAccount() {
       ..._acctExtras,
       assetClass: savedAssetClass,
       geography:  savedGeography,
+      familyVisible,
     };
   } else {
     const id = 'nwa_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
@@ -24871,6 +24890,7 @@ function saveNWAccount() {
       ..._acctExtras,
       assetClass: savedAssetClass,
       geography:  savedGeography,
+      familyVisible,
     });
   }
 
@@ -39758,27 +39778,25 @@ window.renderFamilyDashCard = async function() {
     } catch(e) { spendEl.textContent = '—'; }
   }
 
-  // Household NW — sum of all visible NW accounts
+  // Household NW — sum of only familyVisible accounts
   const nwEl = document.getElementById('family-dash-nw');
   if (nwEl) {
     try {
-      const accounts = data._nwAccounts || [];
-      const totalNW  = accounts.reduce((s, a) => {
-        const bal = typeof nwConvert === 'function'
-          ? nwConvert(a.balance || 0, a.currency)
-          : (a.balance || 0);
-        return s + bal;
-      }, 0);
-      // Subtract liabilities
-      const liab = accounts
-        .filter(a => ['loan','credit_card','mortgage','debt'].includes(a.type))
-        .reduce((s, a) => {
+      const accounts = (data._nwAccounts || []).filter(a => a.familyVisible);
+      if (accounts.length === 0) {
+        nwEl.textContent = 'Mark accounts visible →';
+        nwEl.style.fontSize = '0.75em';
+      } else {
+        const isLiab = a => ['loan','credit_card','mortgage','debt','other_liability'].includes(a.type);
+        const total  = accounts.reduce((s, a) => {
           const bal = typeof nwConvert === 'function'
             ? nwConvert(a.balance || 0, a.currency)
             : (a.balance || 0);
-          return s + Math.abs(bal);
+          return s + (isLiab(a) ? -Math.abs(bal) : bal);
         }, 0);
-      nwEl.textContent = fmt(totalNW - liab);
+        nwEl.textContent = fmt(total);
+        nwEl.style.fontSize = '';
+      }
     } catch(e) { nwEl.textContent = '—'; }
   }
 };
