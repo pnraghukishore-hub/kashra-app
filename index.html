@@ -7239,7 +7239,7 @@ function save() {
     window._ownSaveTs = Date.now();
   }
   firebaseSave();
-  mfDriveAutoSave(); // Zero-knowledge Drive backup (debounced 5s)
+  if (typeof mfDriveAutoSave === 'function') mfDriveAutoSave(); // Zero-knowledge Drive backup (debounced 5s)
 }
 function fmt(n) { return sym()+Math.abs(Number(n)).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
 function fmtFull(n) { return sym()+Math.abs(Number(n)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
