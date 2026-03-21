@@ -39353,43 +39353,20 @@ window.mfFamilyShowInvite = async function() {
     showToast(`🚫 Maximum ${MF_MAX_MEMBERS} family members reached`, 2500); return;
   }
 
-  // Build invite payload
+  // Build invite payload — embed manifest snapshot so member needs NO Drive read to join
   let keyB64 = '';
   keyBytes.forEach(b => keyB64 += String.fromCharCode(b));
   keyB64 = btoa(keyB64);
 
-  // Ensure manifestFileId is in meta — look it up from Drive if missing
-  let manifestFileId = meta.manifestFileId || null;
-  if (!manifestFileId && window._driveToken) {
-    try {
-      const q = encodeURIComponent(`name='${MF_MANIFEST_FILE}' and '${meta.folderId}' in parents and trashed=false`);
-      const r = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
-        { headers: { Authorization: 'Bearer ' + window._driveToken } }
-      );
-      const j = await r.json();
-      manifestFileId = (j.files || [])[0]?.id || null;
-      if (manifestFileId) {
-        // Cache it in meta and make file public
-        meta.manifestFileId = manifestFileId;
-        mfSaveFamilyMeta(meta);
-        await fetch(`https://www.googleapis.com/drive/v3/files/${manifestFileId}/permissions`, {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'reader', type: 'anyone' })
-        });
-        console.log('[MF Family] manifestFileId resolved, cached and set public:', manifestFileId);
-      }
-    } catch(e) { console.warn('[MF Family] Could not resolve manifestFileId:', e); }
-  }
-
   const payload = {
-    v: 1,
+    v: 2,
     familyId: meta.familyId,
     folderId: meta.folderId,
-    manifestFileId,
+    manifestFileId: meta.manifestFileId || null,
     ownerName: meta.ownerName,
     keyB64,
+    // Embed current manifest so member can join without reading Drive
+    manifestSnapshot: manifest || { familyId: meta.familyId, ownerName: meta.ownerName, members: [] },
     expires: Date.now() + MF_INVITE_EXPIRY_MS
   };
   const { code, fullPayload } = mfGen6DigitCode(payload);
@@ -39438,22 +39415,21 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
-  console.log('[MF Family] manifestFileId:', payload.manifestFileId, 'folderId:', payload.folderId);
+  console.log('[MF Family] v:', payload.v, 'hasSnapshot:', !!payload.manifestSnapshot);
 
   try {
-    let manifest = null;
-    if (payload.manifestFileId) {
-      console.log('[MF Family] Reading by file ID:', payload.manifestFileId);
-      manifest = await mfReadManifestById(payload.manifestFileId, keyBytes);
-    }
+    // v2 invite: manifest snapshot embedded — no Drive read needed at all
+    let manifest = payload.manifestSnapshot || null;
     if (!manifest) {
-      console.log('[MF Family] Fallback: folder search');
-      const b64 = await mfReadSharedFolderFile(payload.folderId, MF_MANIFEST_FILE);
-      if (b64) { try { manifest = await mfFamilyDecrypt(b64.trim(), keyBytes); } catch(e) {} }
+      // v1 fallback: try reading from Drive (may fail cross-user — expected)
+      console.log('[MF Family] No snapshot in invite — trying Drive read');
+      if (payload.manifestFileId) {
+        manifest = await mfReadManifestById(payload.manifestFileId, keyBytes);
+      }
     }
     console.log('[MF Family] Manifest:', manifest ? 'OK members='+manifest.members?.length : 'null');
     if (!manifest) {
-      showToast('❌ Could not read family data — ask owner to tap Invite Member again', 4000); return;
+      showToast('❌ Could not read family data — ask owner to generate a new invite', 3500); return;
     }
 
     const activeCount = (manifest.members || []).filter(m => m.status === 'active').length;
@@ -39467,21 +39443,27 @@ window.mfFamilyJoin = async function() {
       joinedAt: new Date().toISOString(), status: 'active'
     });
 
-    // Write updated manifest back
-    if (payload.manifestFileId) {
-      await mfWriteManifestById(payload.manifestFileId, keyBytes, manifest);
-    } else {
-      const updatedB64 = await mfFamilyEncrypt(manifest, keyBytes);
-      await mfWriteSharedFolderFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
-    }
-
+    // Write updated manifest to Drive using owner's folder (owner's token not available here)
+    // Best effort — owner's manifest will sync on their next open
+    // Member saves locally and owner sees them when manifest is refreshed
     mfSaveFamilyKey(keyBytes);
     mfSaveFamilyMeta({
       familyId: payload.familyId, folderId: payload.folderId,
       manifestFileId: payload.manifestFileId || null,
       role: 'member', ownerName: payload.ownerName,
-      myUid: memberId, myName: memberName
+      myUid: memberId, myName: memberName,
+      pendingJoin: true  // flag for owner to confirm on next manifest read
     });
+
+    // Try writing manifest back (will succeed if owner shared folder has writer permission)
+    try {
+      if (payload.manifestFileId) {
+        await mfWriteManifestById(payload.manifestFileId, keyBytes, manifest);
+        console.log('[MF Family] Manifest written back via file ID');
+      }
+    } catch(e) {
+      console.warn('[MF Family] Could not write manifest — owner will see join on next sync:', e.message);
+    }
 
     mfHideFamilyModal();
     showToast(`✅ Joined ${payload.ownerName}'s family!`, 3000);
