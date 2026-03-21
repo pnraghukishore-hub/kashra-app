@@ -39170,11 +39170,11 @@ async function mfDriveReadFamilyFile(folderId, fileName) {
 // Read a file from a shared folder using supportsAllDrives (member accessing owner's folder)
 async function mfReadSharedFolderFile(folderId, fileName) {
   const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
-  const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-    { headers: { Authorization: 'Bearer ' + window._driveToken } }
-  );
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+  console.log('[MF Family] Searching for file:', fileName, 'in folder:', folderId);
+  const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + window._driveToken } });
   const json = await resp.json();
+  console.log('[MF Family] Search result:', JSON.stringify(json).slice(0,200));
   const fileId = (json.files || [])[0]?.id;
   if (!fileId) return null;
   const fileResp = await fetch(
@@ -39364,10 +39364,13 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
+  console.log('[MF Family] token:', !!window._driveToken, 'folderId:', payload.folderId);
 
   try {
     // Read manifest from owner's shared folder using supportsAllDrives
+    console.log('[MF Family] Reading manifest from folder:', payload.folderId);
     const manifestB64 = await mfReadSharedFolderFile(payload.folderId, MF_MANIFEST_FILE);
+    console.log('[MF Family] Manifest b64 length:', manifestB64?.length);
     if (!manifestB64) {
       showToast('❌ Could not reach family folder — check internet connection', 3000); return;
     }
@@ -39375,7 +39378,9 @@ window.mfFamilyJoin = async function() {
     let manifest;
     try {
       manifest = await mfFamilyDecrypt(manifestB64.trim(), keyBytes);
+      console.log('[MF Family] Manifest decrypted, members:', manifest?.members?.length);
     } catch(e) {
+      console.error('[MF Family] Decrypt error:', e);
       showToast('❌ Could not decrypt family data — invite code may be wrong', 3000); return;
     }
 
