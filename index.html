@@ -102,7 +102,7 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <!-- Google Identity Services — Drive OAuth (scope: drive.file only) -->
+  <!-- Google Identity Services — Drive OAuth (scope: drive.appdata — hidden app folder) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- ═══════════════════ -->
   <meta charset="UTF-8" />
@@ -31143,6 +31143,8 @@ _auth.onAuthStateChanged(async user => {
     if (getSmsSettings().capture) startSmsInboxListener();
     // Render SMS settings toggles to match persisted state
     renderSmsSettings();
+    // Now that UID is available, attempt Drive auto-unlock
+    if (typeof mfDriveInitWithUID === 'function') mfDriveInitWithUID();
     // Show Life Decision card now that profile is available
     _showLifeDecisionCard();
     // Apply stored language (re-applies after auth so nav labels are correct)
@@ -38558,9 +38560,58 @@ document.addEventListener('touchend', e=>{
 
 // ── Constants ──────────────────────────────────────────────────────
 const MF_DRIVE_CLIENT_ID = '829444531718-qh5cvflnb7li78pmoof8qkp3u9mik1a0.apps.googleusercontent.com';
-const MF_DRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.file';
+const MF_DRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.appdata';
 const MF_FILE_NAME       = 'moneyfi_private.enc';
 const MF_SETUP_KEY       = 'mf_enc_setup';   // 'done' | 'skipped'
+const MF_SALT_KEY        = 'mf_enc_salt';
+const MF_VERIFY_KEY      = 'mf_enc_verify';  // encrypted verification token for passphrase check
+const MF_STORED_PP_KEY   = 'mf_enc_pp';      // passphrase stored encrypted with device secret (UID)
+const MF_LAST_PP_CHECK   = 'mf_pp_check_ts'; // timestamp of last passphrase reminder
+
+// ── Device-secret helpers ──────────────────────────────────────────
+// Encrypt passphrase using Firebase UID as device secret so it
+// never leaves the device and auto-unlocks on every open.
+async function mfStorePassphrase(passphrase) {
+  const uid = window._fbUser?.uid;
+  if (!uid) return; // can't store without UID
+  try {
+    const enc  = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(uid.padEnd(32, '0').slice(0, 32)), 'AES-GCM', false, ['encrypt']
+    );
+    const iv     = crypto.getRandomValues(new Uint8Array(12));
+    const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, keyMaterial, enc.encode(passphrase));
+    const combined = new Uint8Array(12 + cipher.byteLength);
+    combined.set(iv); combined.set(new Uint8Array(cipher), 12);
+    let binary = '';
+    for (let i = 0; i < combined.length; i += 8192)
+      binary += String.fromCharCode(...combined.subarray(i, i + 8192));
+    localStorage.setItem(MF_STORED_PP_KEY, btoa(binary));
+  } catch(e) { console.warn('[MF] Could not store passphrase:', e.message); }
+}
+
+async function mfLoadStoredPassphrase() {
+  const uid = window._fbUser?.uid;
+  const stored = localStorage.getItem(MF_STORED_PP_KEY);
+  if (!uid || !stored) return null;
+  try {
+    const enc  = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(uid.padEnd(32, '0').slice(0, 32)), 'AES-GCM', false, ['decrypt']
+    );
+    const bytes  = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+    const iv     = bytes.slice(0, 12);
+    const cipher = bytes.slice(12);
+    const plain  = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, keyMaterial, cipher);
+    return new TextDecoder().decode(plain);
+  } catch(e) { return null; }
+}
+
+function mfShouldShowReminder() {
+  // Show passphrase reminder every 30 days
+  const last = parseInt(localStorage.getItem(MF_LAST_PP_CHECK) || '0');
+  return Date.now() - last > 30 * 24 * 60 * 60 * 1000;
+}
 const MF_FILE_ID_KEY     = 'mf_drive_file_id';
 const MF_LAST_BACKUP_KEY = 'mf_last_backup';
 const MF_STORAGE_KEY     = 'financeData';    // must match main app STORAGE_KEY
@@ -38681,14 +38732,24 @@ window.mfPPSetup = async function() {
   if (p1 !== p2)     { if(err) err.textContent = 'Passphrases do not match'; return; }
   if (err) err.textContent = '';
 
-  // Store passphrase in memory only — salt is generated fresh per encryption
+  // Store passphrase in memory only
   window._mfEncPassphrase = p1;
   localStorage.setItem(MF_SETUP_KEY, 'done');
-  window._mfJustSetup = true; // skip restore prompt on first connect this session
+  window._mfJustSetup = true;
+  localStorage.setItem(MF_LAST_PP_CHECK, Date.now().toString());
+
+  // Store passphrase encrypted with device secret (UID) — auto-unlocks on future opens
+  await mfStorePassphrase(p1);
+
+  // Store verification token for 30-day reminder check
+  // Encrypt a known string — if decrypt succeeds later, passphrase is correct
+  try {
+    const verifyB64 = await mfEncrypt({ verify: 'moneyfi-ok' }, p1);
+    localStorage.setItem(MF_VERIFY_KEY, verifyB64);
+  } catch(e) { /* non-critical */ }
 
   mfHidePassphraseModal();
   showToast('🔐 Passphrase set — connecting Drive…', 2000);
-  // GIS needs a moment to initialise — retry up to 3 times
   mfInitTokenClient();
   let _connectAttempts = 0;
   const _tryConnect = () => {
@@ -38708,9 +38769,28 @@ window.mfPPSetup = async function() {
 window.mfPPUnlock = async function() {
   const p   = document.getElementById('mf-pp-unlock-input')?.value || '';
   const err = document.getElementById('mf-pp-unlock-err');
+  const btn = document.querySelector('#mf-pp-unlock-form button');
   if (!p) { if(err) err.textContent = 'Enter your passphrase'; return; }
-  // Store in memory — key derived per-operation using salt from file
+
+  // Validate locally using stored verification token
+  const verifyB64 = localStorage.getItem(MF_VERIFY_KEY);
+  if (verifyB64) {
+    try {
+      const result = await mfDecrypt(verifyB64, p);
+      if (!result || result.verify !== 'moneyfi-ok') throw new Error('bad');
+    } catch(e) {
+      if (err) err.textContent = '❌ Wrong passphrase — try again';
+      return; // stay on modal, don't proceed
+    }
+  }
+
+  if (btn) { btn.textContent = '🔄 Connecting…'; btn.disabled = true; }
+  if (err) err.textContent = '';
+
   window._mfEncPassphrase = p;
+  localStorage.setItem(MF_LAST_PP_CHECK, Date.now().toString());
+  // Store for auto-unlock on future opens
+  await mfStorePassphrase(p);
   mfHidePassphraseModal();
   showToast('🔓 Passphrase accepted — connecting Drive…', 2000);
   mfInitTokenClient();
@@ -38830,7 +38910,7 @@ async function mfDriveFindFile() {
   if (cached) return cached;
 
   const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=name='${MF_FILE_NAME}'+and+trashed=false&spaces=drive&fields=files(id,name)`,
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name)`,
     { headers: { Authorization: 'Bearer ' + window._driveToken } }
   );
   const json = await resp.json();
@@ -38844,7 +38924,10 @@ async function mfDriveFindFile() {
 
 async function mfDriveWriteFile(b64Content) {
   let fileId = await mfDriveFindFile();
-  const metadata = { name: MF_FILE_NAME, mimeType: 'text/plain' };
+  // appDataFolder — hidden from Drive UI, cannot be accidentally deleted
+  const metadata = fileId
+    ? { name: MF_FILE_NAME }
+    : { name: MF_FILE_NAME, parents: ['appDataFolder'] };
   const boundary = 'mf_boundary_' + Date.now();
   const body = [
     '--' + boundary,
@@ -39011,18 +39094,12 @@ function mfUpdateDriveStatusText(msg, color) {
 
 // ── Init on page load ─────────────────────────────────────────────
 function mfDriveInit() {
+  // Called on DOM ready — UID not available yet, just init token client
   mfUpdateDriveUI(false);
+  mfInitTokenClient();
+  // Setup prompt for first-ever launch (no UID needed)
   const setup = localStorage.getItem(MF_SETUP_KEY);
-  if (setup === 'done') {
-    // Passphrase was set before — prompt unlock once only
-    setTimeout(() => {
-      if (!window._mfEncPassphrase && !window._mfPassphraseShown) {
-        window._mfPassphraseShown = true;
-        mfShowPassphraseModal('unlock');
-      }
-    }, 1200);
-  } else if (setup !== 'skipped') {
-    // First time — prompt setup after onboarding, once only
+  if (!setup || setup === '') {
     setTimeout(() => {
       if (!localStorage.getItem(MF_SETUP_KEY) && !window._mfPassphraseShown) {
         window._mfPassphraseShown = true;
@@ -39030,7 +39107,54 @@ function mfDriveInit() {
       }
     }, 3000);
   }
-  mfInitTokenClient();
+}
+
+// Called after Firebase auth — UID is available for device-secret auto-unlock
+async function mfDriveInitWithUID() {
+  if (window._mfEncPassphrase) return; // already unlocked this session
+
+  const setup = localStorage.getItem(MF_SETUP_KEY);
+  if (setup === 'skipped') return;
+
+  if (setup === 'done') {
+    // Try auto-unlock using passphrase stored encrypted with UID
+    const stored = await mfLoadStoredPassphrase();
+    if (stored) {
+      window._mfEncPassphrase = stored;
+      console.log('[MF Drive] Auto-unlocked silently');
+      mfInitTokenClient();
+      // Connect Drive automatically
+      let _attempts = 0;
+      const _tryConnect = () => {
+        if (_tokenClient) {
+          _tokenClient.requestAccessToken({ prompt: '' });
+        } else if (_attempts < 5) {
+          _attempts++;
+          setTimeout(_tryConnect, 800);
+        }
+      };
+      setTimeout(_tryConnect, 800);
+      // 30-day reminder
+      if (mfShouldShowReminder()) {
+        setTimeout(() => {
+          showToast('🔐 Drive backup active — Settings → Zero-Knowledge Backup to manage', 4000);
+          localStorage.setItem(MF_LAST_PP_CHECK, Date.now().toString());
+        }, 4000);
+      }
+    } else {
+      // No stored passphrase on this device — ask once
+      if (!window._mfPassphraseShown) {
+        window._mfPassphraseShown = true;
+        setTimeout(() => mfShowPassphraseModal('unlock'), 1200);
+      }
+    }
+  } else {
+    // Never set up — prompt setup
+    if (!window._mfPassphraseShown) {
+      window._mfPassphraseShown = true;
+      setTimeout(() => mfShowPassphraseModal('setup'), 2000);
+    }
+  }
 }
 
 // Run init after DOM ready
@@ -39173,7 +39297,7 @@ async function mfDriveWriteFamilyFile(folderId, fileName, b64Content) {
 
   const metadata = existingId
     ? {}
-    : { name: fileName, parents: [folderId] };
+    : { name: fileName, parents: ['appDataFolder'] };
 
   const boundary = 'mff_' + Date.now();
   const body = [
