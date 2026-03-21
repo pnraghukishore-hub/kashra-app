@@ -30854,41 +30854,10 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// ── Family vs Personal data routing ──────────────────────────────────────
-const FAMILY_EMAILS = [
-  'pnraghukishore@gmail.com',
-  'swathikishore12@gmail.com',
-  'skanda.penujuri@gmail.com'
-];
-const FAMILY_DOC_ID = 'kishore-family';
-
+// ── Data routing — each user has their own Firestore path ────────────────
 function getDataRef(db, uid, email) {
-  // ── Firestore Security Rules (deploy separately in Firebase Console) ──
-  // rules_version = '2';
-  // service cloud.firestore {
-  //   match /databases/{database}/documents {
-  //     match /users/{uid}/appData/{doc} {
-  //       allow read, write: if request.auth != null && request.auth.uid == uid;
-  //     }
-  //     match /families/{familyId}/appData/{doc} {
-  //       allow read, write: if request.auth != null &&
-  //         request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)/meta).data.activeMemberUIDs;
-  //     }
-  //     match /families/{familyId}/meta {
-  //       allow read: if request.auth != null &&
-  //         request.auth.uid in resource.data.activeMemberUIDs;
-  //       allow write: if request.auth != null &&
-  //         request.auth.uid == resource.data.ownerUID;
-  //     }
-  //   }
-  // }
   if (!uid) { console.error('[Firebase] No UID — cannot determine data ref'); return null; }
-  const isFamily = FAMILY_EMAILS.includes((email || '').toLowerCase());
-  if (isFamily) {
-    return db.collection('families').doc(FAMILY_DOC_ID);
-  } else {
-    return db.collection('users').doc(uid);
-  }
+  return db.collection('users').doc(uid);
 }
 
 // ── Firebase Save: chunked to stay under 1MB Firestore limit ──────────────
@@ -31112,7 +31081,7 @@ _auth.onAuthStateChanged(async user => {
   const loginScreen = document.getElementById('screen-login');
 
   if (user) {
-    // ── Allowlist check — only family members can access ──
+    // ── Allowlist check — beta only, removed at public launch ──
     const ALLOWED_EMAILS = [
       'pnraghukishore@gmail.com',
       'swathikishore12@gmail.com',
