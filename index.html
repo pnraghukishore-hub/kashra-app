@@ -38493,8 +38493,10 @@ document.addEventListener('touchend', e=>{
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════
-     ZERO-KNOWLEDGE DRIVE BACKUP MODULE  —  Phase B
+     ZERO-KNOWLEDGE DRIVE BACKUP MODULE  —  Phase B  (v2 — fixed)
      AES-GCM encryption · PBKDF2 key derivation · Drive REST API v3
+     File format: salt(16B) + IV(12B) + ciphertext → base64
+     Salt travels WITH the file — works on any device with passphrase only
      ══════════════════════════════════════════════════════════════════ -->
 <script>
 (function() {
@@ -38504,18 +38506,20 @@ document.addEventListener('touchend', e=>{
 const MF_DRIVE_CLIENT_ID = '829444531718-qh5cvflnb7li78pmoof8qkp3u9mik1a0.apps.googleusercontent.com';
 const MF_DRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.file';
 const MF_FILE_NAME       = 'moneyfi_private.enc';
-const MF_SALT_KEY        = 'mf_enc_salt';
 const MF_SETUP_KEY       = 'mf_enc_setup';   // 'done' | 'skipped'
 const MF_FILE_ID_KEY     = 'mf_drive_file_id';
 const MF_LAST_BACKUP_KEY = 'mf_last_backup';
+const MF_STORAGE_KEY     = 'financeData';    // must match main app STORAGE_KEY
 
 // In-memory only — never persisted
-window._mfEncKey    = null;   // CryptoKey (AES-GCM)
-window._driveToken  = null;   // OAuth access token string
-window._driveTimer  = null;   // auto-save debounce handle
-window._driveTokenExpiry = 0; // ms timestamp
+window._mfEncPassphrase  = null;  // raw passphrase string (in-memory only)
+window._driveToken       = null;  // OAuth access token string
+window._driveTokenExpiry = 0;     // ms timestamp
 
 // ── Crypto helpers ─────────────────────────────────────────────────
+// File format: salt(16 bytes) + IV(12 bytes) + ciphertext → base64 string
+// Salt travels WITH the file — any device with the passphrase can decrypt
+
 async function mfDeriveKey(passphrase, salt) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
@@ -38530,24 +38534,30 @@ async function mfDeriveKey(passphrase, salt) {
   );
 }
 
-async function mfEncrypt(obj, key) {
-  const iv  = crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder();
+async function mfEncrypt(obj, passphrase) {
+  // Generate fresh salt + IV every time
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await mfDeriveKey(passphrase, salt);
+  const enc  = new TextEncoder();
   const cipher = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj))
   );
-  // Pack: 12-byte IV + ciphertext → base64 string for Drive storage
-  const combined = new Uint8Array(12 + cipher.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(cipher), 12);
+  // Pack: 16-byte salt + 12-byte IV + ciphertext
+  const combined = new Uint8Array(16 + 12 + cipher.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, 16);
+  combined.set(new Uint8Array(cipher), 28);
   return btoa(String.fromCharCode(...combined));
 }
 
-async function mfDecrypt(b64, key) {
-  const bytes    = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const iv       = bytes.slice(0, 12);
-  const cipher   = bytes.slice(12);
-  const plain    = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+async function mfDecrypt(b64, passphrase) {
+  const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const salt   = bytes.slice(0, 16);
+  const iv     = bytes.slice(16, 28);
+  const cipher = bytes.slice(28);
+  const key    = await mfDeriveKey(passphrase, salt);
+  const plain  = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
@@ -38606,19 +38616,16 @@ window.mfPPSetup = async function() {
   const p1 = document.getElementById('mf-pp-input1')?.value || '';
   const p2 = document.getElementById('mf-pp-input2')?.value || '';
   const err = document.getElementById('mf-pp-err');
-  if (p1.length < 8)          { if(err) err.textContent = 'Passphrase must be at least 8 characters'; return; }
-  if (p1 !== p2)              { if(err) err.textContent = 'Passphrases do not match'; return; }
+  if (p1.length < 8) { if(err) err.textContent = 'Passphrase must be at least 8 characters'; return; }
+  if (p1 !== p2)     { if(err) err.textContent = 'Passphrases do not match'; return; }
   if (err) err.textContent = '';
 
-  // Generate salt, derive key, store salt
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  localStorage.setItem(MF_SALT_KEY, btoa(String.fromCharCode(...salt)));
+  // Store passphrase in memory only — salt is generated fresh per encryption
+  window._mfEncPassphrase = p1;
   localStorage.setItem(MF_SETUP_KEY, 'done');
-  window._mfEncKey = await mfDeriveKey(p1, salt);
 
   mfHidePassphraseModal();
   showToast('🔐 Passphrase set — connecting Drive…', 2000);
-  // Kick off Drive auth
   mfDriveConnect();
 };
 
@@ -38627,17 +38634,11 @@ window.mfPPUnlock = async function() {
   const p   = document.getElementById('mf-pp-unlock-input')?.value || '';
   const err = document.getElementById('mf-pp-unlock-err');
   if (!p) { if(err) err.textContent = 'Enter your passphrase'; return; }
-  const saltB64 = localStorage.getItem(MF_SALT_KEY);
-  if (!saltB64) { if(err) err.textContent = 'No passphrase found — please set up first'; return; }
-  const salt = Uint8Array.from(atob(saltB64), c => c.charCodeAt(0));
-  try {
-    window._mfEncKey = await mfDeriveKey(p, salt);
-    mfHidePassphraseModal();
-    showToast('🔓 Drive backup unlocked', 2000);
-    mfDriveConnect();
-  } catch(e) {
-    if(err) err.textContent = 'Incorrect passphrase';
-  }
+  // Store in memory — key derived per-operation using salt from file
+  window._mfEncPassphrase = p;
+  mfHidePassphraseModal();
+  showToast('🔓 Passphrase accepted — connecting Drive…', 2000);
+  mfDriveConnect();
 };
 
 window.mfPPSkip = function() {
@@ -38651,14 +38652,13 @@ let _tokenClient = null;
 function mfInitTokenClient() {
   if (_tokenClient) return;
   if (typeof google === 'undefined' || !google.accounts) {
-    // GIS not loaded yet — retry in 1s
     setTimeout(mfInitTokenClient, 1000);
     return;
   }
   _tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: MF_DRIVE_CLIENT_ID,
     scope: MF_DRIVE_SCOPE,
-    callback: (resp) => {
+    callback: async (resp) => {
       if (resp.error) {
         showToast('❌ Drive auth failed: ' + resp.error, 3000);
         return;
@@ -38667,17 +38667,35 @@ function mfInitTokenClient() {
       window._driveTokenExpiry = Date.now() + ((resp.expires_in || 3600) - 60) * 1000;
       localStorage.setItem(MF_SETUP_KEY, 'done');
       mfUpdateDriveUI(true);
-      showToast('✅ Google Drive connected — backing up…', 2500);
-      mfDriveSaveNow();
+
+      // Check if a backup file already exists on Drive
+      const existingId = await mfDriveFindFile();
+      if (existingId) {
+        // Existing backup found — ask user: restore or keep current?
+        const restore = confirm(
+          '☁️ Existing backup found on Drive.\n\n' +
+          '• OK = Restore from Drive (loads your backed-up data)\n' +
+          '• Cancel = Keep current device data (will overwrite backup)'
+        );
+        if (restore) {
+          mfDriveRestorePrompt(true); // true = silent confirm (already asked)
+        } else {
+          showToast('✅ Google Drive connected', 2000);
+          mfDriveSaveNow();
+        }
+      } else {
+        // No existing backup — safe to save current data
+        showToast('✅ Google Drive connected — backing up…', 2000);
+        mfDriveSaveNow();
+      }
     }
   });
 }
 
 window.mfDriveConnect = function() {
-  if (!window._mfEncKey) {
+  if (!window._mfEncPassphrase) {
     const setup = localStorage.getItem(MF_SETUP_KEY);
-    const salt  = localStorage.getItem(MF_SALT_KEY);
-    if (setup === 'done' && salt) {
+    if (setup === 'done') {
       mfShowPassphraseModal('unlock');
     } else {
       mfShowPassphraseModal('setup');
@@ -38691,8 +38709,8 @@ window.mfDriveConnect = function() {
 
 window.mfDriveDisconnect = function() {
   if (!confirm('Disconnect Google Drive? Your encrypted backup file on Drive will remain. Local data is unchanged.')) return;
-  window._driveToken = null;
-  window._mfEncKey   = null;
+  window._driveToken       = null;
+  window._mfEncPassphrase  = null;
   window._driveTokenExpiry = 0;
   mfUpdateDriveUI(false);
   showToast('🔌 Drive disconnected', 2000);
@@ -38771,19 +38789,22 @@ async function mfDriveReadFile(fileId) {
 
 // ── Save to Drive ──────────────────────────────────────────────────
 window.mfDriveSaveNow = async function() {
-  if (!mfTokenValid() || !window._mfEncKey) return;
+  if (!mfTokenValid() || !window._mfEncPassphrase) return;
   try {
     mfUpdateDriveStatusText('☁️ Backing up…', '#3B9EFF');
+    // Read from localStorage — works from any script block
+    const rawData = localStorage.getItem(MF_STORAGE_KEY);
+    const dataObj = rawData ? JSON.parse(rawData) : {};
     const envelope = {
       _mfVersion: 'MoneyFi-ZK-1.0',
       _savedAt: new Date().toISOString(),
       _theme: localStorage.getItem('mf_theme') || 'default',
       _currency: localStorage.getItem('mf_currency') || null,
-      data: window.data  // global data object
+      data: dataObj
     };
-    const b64 = await mfEncrypt(envelope, window._mfEncKey);
+    const b64 = await mfEncrypt(envelope, window._mfEncPassphrase);
     await mfDriveWriteFile(b64);
-    const ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     localStorage.setItem(MF_LAST_BACKUP_KEY, new Date().toISOString());
     mfUpdateDriveStatusText('✅ Backed up at ' + ts, '#10B981');
     mfUpdateDriveUI(true);
@@ -38796,44 +38817,44 @@ window.mfDriveSaveNow = async function() {
 // Debounced auto-save (called from save())
 let _driveAutoTimer = null;
 window.mfDriveAutoSave = function() {
-  if (!mfTokenValid() || !window._mfEncKey) return;
+  if (!mfTokenValid() || !window._mfEncPassphrase) return;
   clearTimeout(_driveAutoTimer);
   _driveAutoTimer = setTimeout(mfDriveSaveNow, 5000);
 };
 
 // ── Restore from Drive ────────────────────────────────────────────
-window.mfDriveRestorePrompt = async function() {
-  if (!mfTokenValid() || !window._mfEncKey) {
+window.mfDriveRestorePrompt = async function(silentConfirm) {
+  if (!mfTokenValid() || !window._mfEncPassphrase) {
     showToast('⚠️ Connect Drive first', 2000); return;
   }
-  if (!confirm('⚠️ Restore from Drive?\n\nThis will OVERWRITE your current local data with the encrypted Drive backup.\n\nMake a local backup first if needed.')) return;
+  if (!silentConfirm) {
+    if (!confirm('⚠️ Restore from Drive?\n\nThis will OVERWRITE your current local data with the encrypted Drive backup.\n\nMake a local backup first if needed.')) return;
+  }
   try {
     showToast('📥 Reading from Drive…', 2000);
     const fileId = await mfDriveFindFile();
     if (!fileId) { showToast('❌ No backup file found on Drive', 3000); return; }
     const b64 = await mfDriveReadFile(fileId);
-    const envelope = await mfDecrypt(b64, window._mfEncKey);
-    if (!envelope.data) throw new Error('Invalid backup structure');
-    window.data = envelope.data;
-    localStorage.setItem('financeData', JSON.stringify(window.data));
-    if (envelope._theme) { localStorage.setItem('mf_theme', envelope._theme); setTheme(envelope._theme); }
-    if (envelope._currency) { localStorage.setItem('mf_currency', envelope._currency); }
-    // Full re-render
-    try { renderHome(); }        catch(e) {}
-    try { renderTransactions(); } catch(e) {}
-    try { renderBudget(); }      catch(e) {}
-    try { renderNetWorth(); }    catch(e) {}
-    try { renderMetals(); }      catch(e) {}
-    try { renderSettings(); }    catch(e) {}
-    try { renderFHS(); }         catch(e) {}
-    showToast('✅ Restored from Drive — data updated', 3000);
+    let envelope;
+    try {
+      envelope = await mfDecrypt(b64, window._mfEncPassphrase);
+    } catch(decryptErr) {
+      showToast('❌ Wrong passphrase — cannot decrypt backup', 3000);
+      return;
+    }
+    if (!envelope || !envelope.data) {
+      showToast('❌ Backup file is empty or corrupted', 3000); return;
+    }
+    // Write restored data to localStorage — main app reads from here on reload
+    localStorage.setItem(MF_STORAGE_KEY, JSON.stringify(envelope.data));
+    if (envelope._theme)    localStorage.setItem('mf_theme', envelope._theme);
+    if (envelope._currency) localStorage.setItem('mf_currency', envelope._currency);
+    showToast('✅ Restored from Drive — reloading app…', 2000);
+    // Reload after toast so user sees confirmation
+    setTimeout(() => location.reload(), 2200);
   } catch(e) {
     console.error('Drive restore error:', e);
-    if (e.message && e.message.includes('decrypt')) {
-      showToast('❌ Wrong passphrase — cannot decrypt backup', 3000);
-    } else {
-      showToast('❌ Restore failed: ' + e.message, 3000);
-    }
+    showToast('❌ Restore failed: ' + e.message, 3000);
   }
 };
 
@@ -38876,30 +38897,21 @@ function mfUpdateDriveStatusText(msg, color) {
 
 // ── Init on page load ─────────────────────────────────────────────
 function mfDriveInit() {
-  const setup  = localStorage.getItem(MF_SETUP_KEY);
-  const salt   = localStorage.getItem(MF_SALT_KEY);
-
-  // Update settings UI to reflect current state
   mfUpdateDriveUI(false);
-
-  if (setup === 'done' && salt) {
-    // User has set up passphrase before — show unlock modal
-    // Brief delay so app renders first
-    setTimeout(() => mfShowPassphraseModal('unlock'), 1200);
-  } else if (setup !== 'skipped') {
-    // First time — show setup after onboarding completes (delay 3s)
+  const setup = localStorage.getItem(MF_SETUP_KEY);
+  if (setup === 'done') {
+    // Passphrase was set before — prompt unlock after app renders
     setTimeout(() => {
-      if (!localStorage.getItem(MF_SETUP_KEY)) {
-        mfShowPassphraseModal('setup');
-      }
+      if (!window._mfEncPassphrase) mfShowPassphraseModal('unlock');
+    }, 1200);
+  } else if (setup !== 'skipped') {
+    // First time — prompt setup after onboarding
+    setTimeout(() => {
+      if (!localStorage.getItem(MF_SETUP_KEY)) mfShowPassphraseModal('setup');
     }, 3000);
   }
-  // Init GIS token client in background
   mfInitTokenClient();
 }
-
-// Expose connect for settings button
-window.mfDriveConnect = window.mfDriveConnect; // already defined above
 
 // Run init after DOM ready
 if (document.readyState === 'loading') {
