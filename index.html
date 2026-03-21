@@ -38684,6 +38684,7 @@ window.mfPPSetup = async function() {
   // Store passphrase in memory only — salt is generated fresh per encryption
   window._mfEncPassphrase = p1;
   localStorage.setItem(MF_SETUP_KEY, 'done');
+  window._mfJustSetup = true; // skip restore prompt on first connect this session
 
   mfHidePassphraseModal();
   showToast('🔐 Passphrase set — connecting Drive…', 2000);
@@ -38761,7 +38762,16 @@ function mfInitTokenClient() {
         return;
       }
 
-      // Check if a backup file already exists on Drive
+      // If user just created passphrase this session — just backup, don't auto-restore
+      // Restore should be an explicit user action, not automatic on first setup
+      if (window._mfJustSetup) {
+        window._mfJustSetup = false;
+        showToast('✅ Google Drive connected — backing up…', 2000);
+        mfDriveSaveNow();
+        return;
+      }
+
+      // Returning user — check if a backup file already exists on Drive
       const existingId = await mfDriveFindFile();
       if (existingId) {
         // Existing backup found — ask user: restore or keep current?
