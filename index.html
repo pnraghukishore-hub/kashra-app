@@ -555,20 +555,20 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
     .fhs-ring-expanded-name { font-size: 0.88em; font-weight: 900; color: var(--text-dark); }
     .fhs-ring-expanded-band { font-size: 0.68em; font-weight: 700; color: var(--text-light); }
     .fhs-ring-expanded-score { font-size: 1.4em; font-weight: 900; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--white); display: flex; justify-content: space-around; align-items: center; padding: 10px 0 18px; box-shadow: 0 -4px 20px rgba(0,0,0,0.08); z-index: 100; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
-    .nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; color: var(--text-light); font-size: 0.68em; font-weight: 700; transition: color 0.2s; background: none; border: none; padding: 0 10px; }
-    .nav-item .nav-icon { font-size: 1.4em; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--white); display: flex; justify-content: space-around; align-items: center; padding: 8px 0 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); box-shadow: 0 -2px 16px rgba(0,0,0,0.08); z-index: 100; min-height: 56px; }
+    .nav-item { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--text-light); font-size: 0.65em; font-weight: 700; transition: color 0.2s; background: none; border: none; padding: 2px 12px 4px; flex: 1; }
+    .nav-item .nav-icon { font-size: 1.35em; line-height: 1; }
     .nav-item.active { color: var(--yellow); }
-    .nav-item.active .nav-icon { background: var(--yellow); color: white; width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.05em; }
+    .nav-item.active .nav-icon { background: var(--yellow); color: white; width: 36px; height: 36px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1em; }
     /* Floating add button */
     /* Floating add button + launcher */
-    .fab-add { position: fixed; bottom: 72px; right: 20px; width: 56px; height: 56px; background: var(--yellow); border-radius: 50%; border: none; font-size: 1.8em; font-weight: 900; cursor: pointer; box-shadow: 0 4px 20px rgba(245,200,66,0.55); z-index: 200; display: flex; align-items: center; justify-content: center; transition: transform 0.25s, box-shadow 0.2s; animation: fabPulse 2.8s ease-in-out infinite; color: var(--text-dark); line-height: 1; }
+    .fab-add { position: fixed; bottom: calc(70px + max(14px, env(safe-area-inset-bottom))); right: 20px; width: 56px; height: 56px; background: var(--yellow); border-radius: 50%; border: none; font-size: 1.8em; font-weight: 900; cursor: pointer; box-shadow: 0 4px 20px rgba(245,200,66,0.55); z-index: 200; display: flex; align-items: center; justify-content: center; transition: transform 0.25s, box-shadow 0.2s; animation: fabPulse 2.8s ease-in-out infinite; color: var(--text-dark); line-height: 1; }
     .fab-add:hover { transform: scale(1.12); box-shadow: 0 8px 28px rgba(245,200,66,0.7); animation: none; }
     .fab-add.open { transform: rotate(45deg); animation: none; box-shadow: 0 8px 28px rgba(245,200,66,0.7); }
     @keyframes fabPulse { 0%,100%{box-shadow:0 4px 20px rgba(245,200,66,0.55)} 50%{box-shadow:0 4px 30px rgba(245,200,66,0.85),0 0 0 8px rgba(245,200,66,0.15)} }
     @keyframes goalsFabPulse { 0%,100%{box-shadow:0 4px 20px rgba(30,42,110,0.45)} 50%{box-shadow:0 6px 28px rgba(30,42,110,0.7),0 0 0 8px rgba(30,42,110,0.12)} }
     /* Launcher menu */
-    .fab-menu { position: fixed; bottom: 138px; right: 16px; display: flex; flex-direction: column; gap: 10px; z-index: 199; pointer-events: none; }
+    .fab-menu { position: fixed; bottom: calc(138px + max(14px, env(safe-area-inset-bottom))); right: 16px; display: flex; flex-direction: column; gap: 10px; z-index: 199; pointer-events: none; }
     .fab-menu-item { display: flex; align-items: center; gap: 10px; justify-content: flex-end; opacity: 0; transform: translateY(16px) scale(0.9); transition: opacity 0.2s, transform 0.2s; pointer-events: none; }
     .fab-menu-item.visible { opacity: 1; transform: translateY(0) scale(1); pointer-events: all; }
     .fab-menu-item:nth-child(1).visible { transition-delay: 0.08s; }
@@ -582,7 +582,7 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
     .fab-backdrop.open { display: block; }
 
     /* ── SCREENS ── */
-    .screen { display: none; padding: 16px 20px 100px; padding-bottom: calc(100px + env(safe-area-inset-bottom)); position: relative; z-index: 1; }
+    .screen { display: none; padding: 16px 20px 0; padding-bottom: calc(80px + max(14px, env(safe-area-inset-bottom))); position: relative; z-index: 1; }
     .screen.active { display: block; }
 
     /* ── TIME PERIOD SELECTOR (innovative calendar strip) ── */
