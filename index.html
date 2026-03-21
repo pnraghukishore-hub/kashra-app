@@ -2757,8 +2757,13 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
       <div style="display:flex;align-items:center;justify-content:center;gap:10px;">
         <div class="spending-label">💸 <span data-i18n="totalSpending">Total Spending</span></div>
         <button onclick="toggleNWVisibility()" title="Hide/show all amounts"
-          style="background:none;border:none;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:10px;background:var(--bg);color:var(--text-light);"
-          id="home-privacy-btn">🔓</button>
+          id="home-privacy-btn"
+          style="background:none;border:1.5px solid #CBD5E1;cursor:pointer;border-radius:20px;padding:3px 8px;display:flex;align-items:center;gap:4px;color:#64748B;">
+          <svg id="home-privacy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
       </div>
       <div class="spending-amount" id="home-spending">$0</div>
     </div>
@@ -4184,19 +4189,27 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
         <div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Zero-Knowledge Backup</div>
         <div style="font-size:0.7em;font-weight:600;margin-top:1px;" id="drive-backup-status-label">AES-256 encrypted · Your Drive · MoneyFi sees nothing</div>
       </div>
+      <span id="drive-header-badge" style="display:none;font-size:0.6em;font-weight:800;padding:2px 7px;border-radius:8px;flex-shrink:0;margin-right:4px;"></span>
       <span style="color:#CCC;font-size:0.85em;">›</span>
     </div>
     <div class="acc-body" id="acc-drive-backup-body" style="display:none;padding:14px 16px;">
       <!-- Status card -->
       <div id="drive-status-card" style="background:#F8FAFF;border-radius:12px;padding:12px 14px;margin-bottom:12px;border:1.5px solid #E0E7FF;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-          <span id="drive-status-icon" style="font-size:1.3em;">⚪</span>
-          <div>
-            <div id="drive-status-text" style="font-weight:800;font-size:0.85em;color:#1E2A6E;">Not connected</div>
-            <div id="drive-last-backup" style="font-size:0.7em;color:#999;font-weight:600;">No backup yet</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="drive-status-icon" style="font-size:1.3em;">⚪</span>
+            <div>
+              <div id="drive-status-text" style="font-weight:800;font-size:0.85em;color:#1E2A6E;">Not connected</div>
+              <div id="drive-last-backup" style="font-size:0.7em;color:#999;font-weight:600;">No backup yet</div>
+            </div>
           </div>
+          <span id="drive-reliability-badge" style="display:none;font-size:0.65em;font-weight:800;padding:3px 8px;border-radius:8px;"></span>
         </div>
       </div>
+      <!-- Restore recovery UI (shown on restore failure) -->
+      <div id="drive-restore-recovery" style="display:none;"></div>
+      <!-- Backup retry UI (shown on backup failure) -->
+      <div id="drive-retry-banner" style="display:none;"></div>
       <!-- Action buttons -->
       <div id="drive-not-connected" style="">
         <button onclick="mfDriveConnect()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.85em;cursor:pointer;margin-bottom:8px;">
@@ -4621,7 +4634,10 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="nw-hero-label" style="margin-bottom:0;">💎 Total Net Worth</div>
       <button class="nw-eye-btn" id="nw-eye-btn" onclick="toggleNWVisibility();trackFeature('nw_hide_values')" title="Hide/show balances">
-        <span id="nw-eye-icon">🔓</span>
+        <svg id="nw-eye-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
       </button>
     </div>
     <div class="nw-hero-amount" id="nw-total" style="text-align:left;">$0</div>
@@ -23551,11 +23567,17 @@ function toggleNWVisibility() {
 
 function applyPrivacyMode() {
   const iconEl = document.getElementById('nw-eye-icon');
-  if (iconEl) iconEl.textContent = _nwHidden ? '\xf0\x9f\x94\x92' : '\xf0\x9f\x94\x93';
+  if (iconEl) iconEl.innerHTML = _nwHidden
+    ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`
+    : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
   document.body.classList.toggle('privacy-mode', _nwHidden);
-  // Sync home privacy button icon
+  // Sync home privacy SVG icon
+  const homePrivIcon = document.getElementById('home-privacy-icon');
+  if (homePrivIcon) homePrivIcon.innerHTML = _nwHidden
+    ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`
+    : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
   const homePrivBtn = document.getElementById('home-privacy-btn');
-  if (homePrivBtn) homePrivBtn.textContent = _nwHidden ? '\xf0\x9f\x94\x92' : '\xf0\x9f\x94\x93';
+  if (homePrivBtn) { homePrivBtn.style.color = _nwHidden ? '#7C3AED' : '#64748B'; homePrivBtn.style.borderColor = _nwHidden ? '#7C3AED' : '#CBD5E1'; }
 
   // NW screen targets
   const targets = document.querySelectorAll(
@@ -30903,9 +30925,9 @@ function showSyncStatus(msg, color='#10B981', duration=2500) {
   bar.style.display = 'block';
   bar._shownAt = Date.now();
   clearTimeout(bar._hideTimer);
-  if (duration > 0) {
-    bar._hideTimer = setTimeout(() => { bar.style.display = 'none'; }, duration);
-  }
+  // Always auto-hide — 0 duration uses 8s safety net so bar never sticks permanently
+  const hideAfter = duration > 0 ? duration : 8000;
+  bar._hideTimer = setTimeout(() => { bar.style.display = 'none'; }, hideAfter);
 }
 
 // iOS Safari suspends JS timers when tab is backgrounded.
@@ -38582,7 +38604,10 @@ function mfShouldShowReminder() {
   return Date.now() - last > 30 * 24 * 60 * 60 * 1000;
 }
 const MF_FILE_ID_KEY     = 'mf_drive_file_id';
-const MF_LAST_BACKUP_KEY = 'mf_last_backup';
+const MF_LAST_BACKUP_KEY  = 'mf_last_backup';
+const MF_LAST_RESTORE_KEY = 'mf_last_restore';   // timestamp of last successful Drive restore
+const MF_DRIVE_STATUS_KEY = 'mf_drive_status';   // 'ok' | 'error' | 'offline' | 'disconnected'
+const MF_BACKUP_FAIL_KEY  = 'mf_backup_failures'; // count of consecutive backup failures
 const MF_STORAGE_KEY     = 'financeData';    // must match main app STORAGE_KEY
 
 // In-memory only — never persisted
@@ -38945,9 +38970,9 @@ async function mfDriveReadFile(fileId) {
 // ── Save to Drive ──────────────────────────────────────────────────
 window.mfDriveSaveNow = async function() {
   if (!mfTokenValid() || !window._mfEncPassphrase) return;
+  mfSetDriveStatus('syncing');
   try {
     mfUpdateDriveStatusText('☁️ Backing up…', '#3B9EFF');
-    // Read from localStorage — works from any script block
     const rawData = localStorage.getItem(MF_STORAGE_KEY);
     const dataObj = rawData ? JSON.parse(rawData) : {};
     const envelope = {
@@ -38960,12 +38985,11 @@ window.mfDriveSaveNow = async function() {
     const b64 = await mfEncrypt(envelope, window._mfEncPassphrase);
     await mfDriveWriteFile(b64);
     const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    localStorage.setItem(MF_LAST_BACKUP_KEY, new Date().toISOString());
     mfUpdateDriveStatusText('✅ Backed up at ' + ts, '#10B981');
-    mfUpdateDriveUI(true);
+    mfOnBackupSuccess(); // ← reliability layer
   } catch(e) {
-    console.error('Drive save error:', e);
     mfUpdateDriveStatusText('⚠️ Backup failed — will retry', '#F59E0B');
+    mfOnBackupFail(e); // ← reliability layer
   }
 };
 
@@ -39007,6 +39031,8 @@ window.mfDriveRestorePrompt = async function(silentConfirm, noReload) {
     if (noReload) {
       // In-session restore — reload data object without page refresh
       try { data = JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '{}'); setTimeout(runRecurringScheduler, 500); } catch(e) {}
+      localStorage.setItem(MF_LAST_RESTORE_KEY, new Date().toISOString());
+      if (typeof mfOnBackupSuccess === 'function') mfOnBackupSuccess();
       return;
     }
     showToast('✅ Restored from Drive — reloading app…', 2000);
@@ -39014,10 +39040,142 @@ window.mfDriveRestorePrompt = async function(silentConfirm, noReload) {
     setTimeout(() => location.reload(), 2200);
   } catch(e) {
     console.error('Drive restore error:', e);
-    if (!noReload) showToast('❌ Restore failed: ' + e.message, 3000);
+    if (noReload) {
+      if (typeof mfShowRestoreRecovery === 'function') mfShowRestoreRecovery(e.message);
+    } else {
+      showToast('❌ Restore failed: ' + e.message, 3000);
+    }
   }
 };
 // ── Settings UI updates ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// DRIVE RELIABILITY LAYER — Trust & Recovery
+// 1. Persistent Drive status indicator
+// 2. Restore failure → clear recovery dialog
+// 3. Backup failure → visible warning + retry
+// 4. Offline detection → honest message
+// 5. Last synced timestamp always visible
+// ══════════════════════════════════════════════════════════════════
+
+// ── 1 & 5: Drive status + last synced ─────────────────────────────
+function mfSetDriveStatus(status, detail) {
+  // status: 'ok' | 'error' | 'offline' | 'disconnected' | 'syncing'
+  localStorage.setItem(MF_DRIVE_STATUS_KEY, status);
+  mfUpdateDriveUI(status === 'ok' || status === 'syncing');
+  mfUpdateDrivePersistentBadge(status, detail);
+}
+
+// Small persistent badge in Settings Drive accordion header
+function mfUpdateDrivePersistentBadge(status, detail) {
+  const configs = {
+    ok:           { bg:'#DCFCE7', color:'#15803D', text:'✅ Synced' },
+    syncing:      { bg:'#DBEAFE', color:'#1D4ED8', text:'☁️ Syncing…' },
+    error:        { bg:'#FEE2E2', color:'#DC2626', text:'⚠️ Failed' },
+    offline:      { bg:'#FEF3C7', color:'#92400E', text:'📵 Offline' },
+    disconnected: { bg:'#F3F4F6', color:'#6B7280', text:'Not set up' },
+  };
+  const cfg = configs[status] || configs.disconnected;
+  ['drive-reliability-badge','drive-header-badge'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.background = cfg.bg;
+    el.style.color      = cfg.color;
+    el.textContent      = cfg.text;
+    el.style.display    = 'inline-block';
+  });
+}
+
+// ── 3: Backup failure handling ─────────────────────────────────────
+function mfOnBackupSuccess() {
+  localStorage.setItem(MF_LAST_BACKUP_KEY, new Date().toISOString());
+  localStorage.setItem(MF_BACKUP_FAIL_KEY, '0');
+  mfSetDriveStatus('ok');
+}
+
+function mfOnBackupFail(err) {
+  const fails = parseInt(localStorage.getItem(MF_BACKUP_FAIL_KEY) || '0') + 1;
+  localStorage.setItem(MF_BACKUP_FAIL_KEY, String(fails));
+  const isOffline = !navigator.onLine;
+  mfSetDriveStatus(isOffline ? 'offline' : 'error');
+
+  // Show warning banner after 2 consecutive failures
+  if (fails >= 2) {
+    const msg = isOffline
+      ? '📵 Offline — data saved locally, will sync when reconnected'
+      : '⚠️ Backup failed — tap to retry';
+    showSyncStatus(msg, isOffline ? '#F59E0B' : '#EF4444', 6000);
+    // Add retry button to Drive status card
+    mfShowBackupRetryUI();
+  }
+  console.warn('[KashRA Drive] Backup failed (attempt', fails, '):', err?.message);
+}
+
+function mfShowBackupRetryUI() {
+  const retryEl = document.getElementById('drive-retry-banner');
+  if (!retryEl) return;
+  retryEl.style.display = 'block';
+  retryEl.innerHTML = `
+    <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-weight:800;font-size:0.82em;color:#DC2626;">⚠️ Backup failed</div>
+        <div style="font-size:0.7em;color:#999;font-weight:600;margin-top:2px;">Your data is saved locally — tap to retry</div>
+      </div>
+      <button onclick="mfDriveSaveNow();document.getElementById('drive-retry-banner').style.display='none';"
+        style="background:#EF4444;color:white;border:none;border-radius:8px;padding:6px 12px;font-family:Nunito;font-weight:800;font-size:0.75em;cursor:pointer;">
+        Retry
+      </button>
+    </div>`;
+}
+
+// ── 2: Restore failure → clear recovery dialog ─────────────────────
+function mfShowRestoreRecovery(reason) {
+  mfSetDriveStatus('error', reason);
+  // Show non-blocking recovery options instead of silent failure
+  const el = document.getElementById('drive-restore-recovery');
+  if (!el) {
+    // Fallback: show in sync status bar with action
+    showSyncStatus('⚠️ Could not load from Drive — using local data', '#F59E0B', 8000);
+    return;
+  }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+      <div style="font-weight:800;font-size:0.85em;color:#92400E;margin-bottom:4px;">☁️ Could not load from Drive</div>
+      <div style="font-size:0.72em;color:#78716C;font-weight:600;margin-bottom:10px;">${reason || 'Using local data — your last saved version.'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button onclick="mfDriveRestorePrompt();document.getElementById('drive-restore-recovery').style.display='none';"
+          style="background:#7C3AED;color:white;border:none;border-radius:8px;padding:8px;font-family:Nunito;font-weight:800;font-size:0.75em;cursor:pointer;">
+          🔄 Try Again
+        </button>
+        <button onclick="document.getElementById('drive-restore-recovery').style.display='none';"
+          style="background:#F3F4F6;color:#1E2A6E;border:none;border-radius:8px;padding:8px;font-family:Nunito;font-weight:800;font-size:0.75em;cursor:pointer;">
+          ✓ Use Local Data
+        </button>
+      </div>
+    </div>`;
+}
+
+// ── 4: Offline detection ───────────────────────────────────────────
+window.addEventListener('online',  () => {
+  mfSetDriveStatus(window._driveToken ? 'ok' : 'disconnected');
+  showSyncStatus('🌐 Back online', '#10B981', 3000);
+  // Auto-retry backup if there were failures
+  const fails = parseInt(localStorage.getItem(MF_BACKUP_FAIL_KEY) || '0');
+  if (fails > 0 && window._mfEncPassphrase && window._driveToken) {
+    setTimeout(mfDriveSaveNow, 2000);
+  }
+});
+
+window.addEventListener('offline', () => {
+  mfSetDriveStatus('offline');
+  showSyncStatus('📵 You\'re offline — data saved locally', '#F59E0B', 5000);
+});
+
+// Check offline on init
+function mfCheckConnectivity() {
+  if (!navigator.onLine) mfSetDriveStatus('offline');
+}
+
 function mfUpdateDriveUI(connected) {
   const notConnected = document.getElementById('drive-not-connected');
   const connActions  = document.getElementById('drive-connected-actions');
@@ -39026,26 +39184,44 @@ function mfUpdateDriveUI(connected) {
   const lastBackup   = document.getElementById('drive-last-backup');
   const statusLabel  = document.getElementById('drive-backup-status-label');
 
+  const formatTime = iso => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1)  return 'just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24)  return `${diffHr}h ago`;
+    return d.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' +
+           d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  };
+
   if (connected) {
     if (notConnected) notConnected.style.display = 'none';
     if (connActions)  connActions.style.display  = 'block';
-    if (statusIcon)   statusIcon.textContent  = '🟢';
-    if (statusText)   statusText.textContent  = 'Google Drive connected';
+    if (statusIcon)   statusIcon.textContent = '🟢';
+    if (statusText)   { statusText.textContent = 'Google Drive connected'; statusText.style.color = '#15803D'; }
     if (statusLabel)  statusLabel.textContent = '✅ AES-256 encrypted · Auto-backup on';
-    const last = localStorage.getItem(MF_LAST_BACKUP_KEY);
-    if (last && lastBackup) {
-      const d = new Date(last);
-      lastBackup.textContent = 'Last backup: ' + d.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-    } else if (lastBackup) {
-      lastBackup.textContent = 'No backup yet — tap Backup Now';
+    const lastB = formatTime(localStorage.getItem(MF_LAST_BACKUP_KEY));
+    const lastR = formatTime(localStorage.getItem(MF_LAST_RESTORE_KEY));
+    if (lastBackup) {
+      if (lastB) {
+        lastBackup.innerHTML = `Backed up: <b>${lastB}</b>${lastR ? ` · Restored: <b>${lastR}</b>` : ''}`;
+      } else {
+        lastBackup.textContent = 'No backup yet — tap Backup Now';
+        lastBackup.style.color = '#EF4444';
+      }
     }
   } else {
     if (notConnected) notConnected.style.display = 'block';
     if (connActions)  connActions.style.display  = 'none';
-    if (statusIcon)   statusIcon.textContent  = '⚪';
-    if (statusText)   statusText.textContent  = 'Not connected';
-    if (lastBackup)   lastBackup.textContent  = 'No backup yet';
-    if (statusLabel)  statusLabel.textContent = 'AES-256 encrypted · Your Drive · MoneyFi sees nothing';
+    if (statusIcon)   statusIcon.textContent = navigator.onLine ? '⚪' : '📵';
+    if (statusText)   { statusText.textContent = navigator.onLine ? 'Not connected' : 'Offline'; statusText.style.color = '#6B7280'; }
+    const lastB = formatTime(localStorage.getItem(MF_LAST_BACKUP_KEY));
+    if (lastBackup)  lastBackup.textContent = lastB ? `Last backup: ${lastB}` : 'No backup yet';
+    if (statusLabel) statusLabel.textContent = 'AES-256 encrypted · Your Drive · MoneyFi sees nothing';
   }
 }
 
@@ -39058,6 +39234,7 @@ function mfUpdateDriveStatusText(msg, color) {
 function mfDriveInit() {
   // Called on DOM ready — UID not available yet, just init token client
   mfUpdateDriveUI(false);
+  mfCheckConnectivity(); // set offline badge immediately if needed
   mfInitTokenClient();
   // Setup prompt for first-ever launch (no UID needed)
   const setup = localStorage.getItem(MF_SETUP_KEY);
