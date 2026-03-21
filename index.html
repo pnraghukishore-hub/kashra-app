@@ -30930,168 +30930,64 @@ function getDataRef(db, uid, email) {
 
 // ── Firebase Save: chunked to stay under 1MB Firestore limit ──────────────
 let _saveTimer = null;
+// ── Personal data save/load → Google Drive (zero-knowledge) ──────────────
+// Firestore is used ONLY for family coordination (mf_family_* collections)
+// Personal financial data never touches Firestore in KashRA public architecture
+
 function firebaseSave() {
-  if (!window._fbUser) return;
-  // Debounce: 500ms is enough — profile/settings data is tiny
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => _doFirebaseSave(), 500);
+  // No-op — personal data saved via mfDriveAutoSave() (Drive, AES-256)
+  // Firestore personal sync removed for zero-knowledge public launch
 }
 
 function _doFirebaseSave() {
-  if (!window._fbUser) return;
-  const uid   = window._fbUser.uid;
-  const email = window._fbUser.email;
-  showSyncStatus('☁️ Saving...', '#3B9EFF', 0);
-
-  // Split data into chunks to stay well under Firestore 1MB doc limit
-  // Chunk 1 (main): transactions, budgets, goals, settings, FHS profile
-  // Chunk 2 (assets): heavy arrays — metals, NW accounts, investments, snapshots
-  const chunk1 = {};
-  const chunk2 = {};
-  const heavy = ['_metals','_nwAccounts','_realEstate','_nwSnapshots'];
-
-  Object.keys(data).forEach(k => {
-    if (heavy.includes(k)) chunk2[k] = data[k];
-    else chunk1[k] = data[k];
-  });
-
-  const baseRef = getDataRef(_db, uid, email);
-  const batch = _db.batch();
-  // Embed nonce into both docs so onSnapshot can identify our own writes
-  const _nonce = window._writeNonce || 0;
-  batch.set(baseRef.collection('appData').doc('main'),
-    { ...chunk1, _savedAt: firebase.firestore.FieldValue.serverTimestamp(), _writeNonce: _nonce });
-  batch.set(baseRef.collection('appData').doc('assets'),
-    { ...chunk2, _savedAt: firebase.firestore.FieldValue.serverTimestamp(), _writeNonce: _nonce });
-
-  // Stamp suppress window BEFORE commit (time guard as secondary fallback)
-  window._ownSaveTs = Date.now();
-
-  // Race commit against a 12s timeout — iOS Safari never hangs the status bar forever
-  const commitPromise = batch.commit();
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('commit_timeout')), 12000)
-  );
-
-  Promise.race([commitPromise, timeoutPromise])
-    .then(() => {
-      // Refresh suppress window from actual commit completion time
-      window._ownSaveTs = Date.now();
-      showSyncStatus('✅ Synced', '#10B981', 2000);
-      try { renderNetWorth(); } catch(e) {}
-      try { renderMetals(); } catch(e) {}
-      try { renderHome(); } catch(e) {}
-    })
-    .catch(err => {
-      console.error('Firebase save error:', err);
-      if (err.message === 'commit_timeout') {
-        showSyncStatus('⚠️ Slow connection — saved locally, retrying...', '#F59E0B', 4000);
-        // Retry once after 5s in case connection recovered
-        setTimeout(() => { if (window._fbUser) _doFirebaseSave(); }, 5000);
-      } else {
-        showSyncStatus('⚠️ Sync failed — saved locally', '#F59E0B', 3000);
-      }
-    });
+  // No-op — see firebaseSave()
 }
 
-// _saveProfileToFirebase removed — profile saved via save() → batch chunk1 (main doc)
+let _saveTimer = null; // kept to avoid reference errors
 
 // ── Firebase Load: merge chunks back into data ────────────────────────────
+// ── Personal data load → from Drive (on sign-in and manual refresh) ──────
 async function firebaseLoad(uid) {
+  // Personal data lives on Drive, not Firestore
+  // Attempt Drive restore if passphrase is available
   showSyncStatus('☁️ Loading your data...', '#3B9EFF', 0);
-  const email = window._fbUser ? window._fbUser.email : '';
   try {
-    const baseRef = getDataRef(_db, uid, email);
-    const [mainSnap, assetsSnap] = await Promise.all([
-      baseRef.collection('appData').doc('main').get(),
-      baseRef.collection('appData').doc('assets').get(),
-    ]);
-    const mainData   = mainSnap.exists   ? mainSnap.data()   : {};
-    const assetsData = assetsSnap.exists ? assetsSnap.data() : {};
-    delete mainData._savedAt;   delete mainData._writeNonce;
-    delete assetsData._savedAt; delete assetsData._writeNonce;
-    const merged = { ...mainData, ...assetsData };
-
-    if (Object.keys(merged).length > 0) {
-      // Cloud data exists — merge with local, but preserve locally-newer profile data.
-      // If iOS commit failed, local profile may be ahead of cloud; don't overwrite it.
-      const localProfile  = data._fhsProfile;
-      const cloudProfile  = merged._fhsProfile;
-      const localNewer = localProfile?.updatedAt && cloudProfile?.updatedAt &&
-                         localProfile.updatedAt > cloudProfile.updatedAt;
-      data = { ...data, ...merged };
-      if (localNewer) data._fhsProfile = localProfile; // local wins
-      // Migration note: stale INR override cleanup removed — user overrides are intentional
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      showSyncStatus('✅ Data loaded from cloud', '#10B981', 2500);
-      setTimeout(runRecurringScheduler, 500);
+    if (window._mfEncPassphrase && window._driveToken) {
+      // Try to load from Drive
+      await mfDriveRestorePrompt(true, true); // silent=true, noReload=true
+      showSyncStatus('✅ Data loaded from Drive', '#10B981', 2500);
     } else {
-      // No cloud data yet — push local data to cloud
-      showSyncStatus('☁️ First sync — uploading local data...', '#3B9EFF', 0);
-      firebaseSave();
+      // No passphrase yet — use localStorage only
+      showSyncStatus('✅ Using local data', '#10B981', 2000);
     }
-
-    // Restore custom NW types
-    (data._nwCustomTypes || []).forEach(c => {
-      NW_TYPES[c.key] = { label: c.label, emoji: c.emoji||'🏦', color:'#6B7280', isLiab: c.isLiab||false };
-    });
-
-    // ── Silent asset class migration (Phase 2) ──
-    migrateAssetClassTags();
-  migrateSebiCategory();
-
-    // Re-render everything with cloud data
-    applyStoredTheme();
-    applyStoredCBMode();
-    renderHome();
-    try { renderNetWorth(); } catch(e) {}
-    try { renderMetals(); } catch(e) {}
-    try { renderTransactions && renderTransactions(); } catch(e) {}
-    populateDataMonthSelect && populateDataMonthSelect();
-
-  } catch (err) {
-    console.error('Firebase load error:', err);
-    showSyncStatus('⚠️ Could not load cloud data — using local', '#F59E0B', 3000);
+  } catch(e) {
+    console.warn('[KashRA] Drive load on sign-in failed:', e.message);
+    showSyncStatus('✅ Using local data', '#10B981', 2000);
   }
+
+  // Always restore custom NW types from local data
+  (data._nwCustomTypes || []).forEach(c => {
+    NW_TYPES[c.key] = { label: c.label, emoji: c.emoji||'🏦', color:'#6B7280', isLiab: c.isLiab||false };
+  });
+  try { migrateAssetClassTags(); } catch(e) {}
+  try { migrateSebiCategory(); } catch(e) {}
+
+  applyStoredTheme();
+  applyStoredCBMode();
+  renderHome();
+  try { renderNetWorth(); } catch(e) {}
+  try { renderMetals(); } catch(e) {}
+  try { renderTransactions && renderTransactions(); } catch(e) {}
+  populateDataMonthSelect && populateDataMonthSelect();
 }
 
 // ── Real-time listener: update UI when another device saves ───────────────
 let _unsubscribeListener = null;
 function startRealtimeSync(uid) {
-  if (_unsubscribeListener) _unsubscribeListener();
-  const email = window._fbUser ? window._fbUser.email : '';
-  const baseRef = getDataRef(_db, uid, email);
-  const mainRef   = baseRef.collection('appData').doc('main');
-  const assetsRef = baseRef.collection('appData').doc('assets');
-
-  // Suppress if: (a) nonce matches our last write, OR (b) within 10s time window (clock drift fallback)
-  const _shouldSuppress = (snap) => {
-    const snapNonce = snap.data()?._writeNonce;
-    if (snapNonce !== undefined && snapNonce === window._writeNonce) return true;
-    return window._ownSaveTs && (Date.now() - window._ownSaveTs) < 10000;
-  };
-
-  const _mainUnsub = mainRef.onSnapshot(snap => {
-    if (!snap.exists || snap.metadata.hasPendingWrites) return;
-    if (_shouldSuppress(snap)) return;
-    firebaseLoad(uid).then(() => {
-      showSyncStatus('🔄 Updated from another device', '#8B5CF6', 2500);
-      try { renderNetWorth(); } catch(e) {}
-      try { renderMetals(); } catch(e) {}
-    });
-  }, err => console.warn('Realtime sync error:', err));
-
-  // Also watch assets doc (_nwAccounts, _nwSnapshots, _metals live here)
-  const _assetsUnsub = assetsRef.onSnapshot(snap => {
-    if (!snap.exists || snap.metadata.hasPendingWrites) return;
-    if (_shouldSuppress(snap)) return;
-    firebaseLoad(uid).then(() => {
-      try { renderNetWorth(); } catch(e) {}
-      try { renderMetals(); } catch(e) {}
-    });
-  }, err => console.warn('Realtime assets sync error:', err));
-
-  _unsubscribeListener = () => { _mainUnsub(); _assetsUnsub(); };
+  // Personal data real-time sync removed — Drive is the source of truth
+  // Cross-device sync: open app → Drive restore loads latest data
+  // Family data (txns, NW, manifest) still syncs via mfStartFamilyTxnsListener()
+  console.log('[KashRA] Personal Firestore sync disabled — Drive is source of truth');
 }
 
 // ── Auth state handler ────────────────────────────────────────────────────
@@ -31198,21 +31094,35 @@ _auth.onAuthStateChanged(async user => {
       userAvatar.style.display = 'block';
     }
 
-    // Load data from cloud, then start real-time sync
-    await firebaseLoad(user.uid);
-    startRealtimeSync(user.uid);
-    fetchLiveFX();           // refresh FX rates in background — non-blocking
-    fetchLiveMetalPrices();  // refresh gold/silver prices in background — non-blocking
-    // Start SMS inbox listener if capture is enabled
+    // ── Step 1: Render immediately from localStorage (instant, no flash) ──
+    showSyncStatus('☁️ Loading…', '#3B9EFF', 0);
+    (data._nwCustomTypes || []).forEach(c => {
+      NW_TYPES[c.key] = { label: c.label, emoji: c.emoji||'🏦', color:'#6B7280', isLiab: c.isLiab||false };
+    });
+    try { migrateAssetClassTags(); migrateSebiCategory(); } catch(e) {}
+    applyStoredTheme(); applyStoredCBMode();
+    renderHome();
+    try { renderNetWorth(); } catch(e) {}
+    try { renderMetals(); } catch(e) {}
+    try { renderTransactions && renderTransactions(); } catch(e) {}
+    populateDataMonthSelect && populateDataMonthSelect();
+
+    // ── Step 2: Background tasks (non-blocking) ──
+    fetchLiveFX();
+    fetchLiveMetalPrices();
     if (getSmsSettings().capture) startSmsInboxListener();
-    // Render SMS settings toggles to match persisted state
     renderSmsSettings();
-    // Now that UID is available, attempt Drive auto-unlock
-    if (typeof mfDriveInitWithUID === 'function') mfDriveInitWithUID();
-    // Show Life Decision card now that profile is available
     _showLifeDecisionCard();
-    // Apply stored language (re-applies after auth so nav labels are correct)
     applyStoredLanguage();
+
+    // ── Step 3: Drive auto-unlock + seamless restore ──
+    // Runs in background — once passphrase ready, loads Drive data and re-renders
+    if (typeof mfDriveInitWithUID === 'function') {
+      mfDriveInitWithUID().then && null; // fire and forget — mfDriveInitWithUID handles re-render
+    }
+
+    // ── Step 4: Legacy firebaseLoad stub (no-op now, kept for compatibility) ──
+    startRealtimeSync(user.uid); // stub — logs only
 
   } else {
     // Not signed in — show login screen
@@ -38915,23 +38825,23 @@ function mfInitTokenClient() {
         return;
       }
 
-      // Returning user — check if a backup file already exists on Drive
+      // Returning user auto-connecting (mfDriveInitWithUID path)
+      // Seamlessly restore from Drive without asking — this is their own device
       const existingId = await mfDriveFindFile();
       if (existingId) {
-        // Existing backup found — ask user: restore or keep current?
-        const restore = confirm(
-          '☁️ Existing backup found on Drive.\n\n' +
-          '• OK = Restore from Drive (loads your backed-up data)\n' +
-          '• Cancel = Keep current device data (will overwrite backup)'
-        );
-        if (restore) {
-          mfDriveRestorePrompt(true); // true = silent confirm (already asked)
-        } else {
-          showToast('✅ Google Drive connected', 2000);
-          mfDriveSaveNow();
-        }
+        showSyncStatus('☁️ Syncing from Drive…', '#3B9EFF', 0);
+        await mfDriveRestorePrompt(true, true); // silent + no reload
+        // Re-render with Drive data
+        applyStoredTheme(); applyStoredCBMode();
+        renderHome();
+        try { renderNetWorth(); } catch(e) {}
+        try { renderMetals(); } catch(e) {}
+        try { renderTransactions && renderTransactions(); } catch(e) {}
+        showSyncStatus('✅ Synced from Drive', '#10B981', 2500);
+        // Backup now to keep Drive current
+        setTimeout(mfDriveSaveNow, 3000);
       } else {
-        // No existing backup — safe to save current data
+        // No backup yet — save current data
         showToast('✅ Google Drive connected — backing up…', 2000);
         mfDriveSaveNow();
       }
@@ -39073,52 +38983,45 @@ window.mfDriveAutoSave = function() {
 };
 
 // ── Restore from Drive ────────────────────────────────────────────
-window.mfDriveRestorePrompt = async function(silentConfirm) {
+window.mfDriveRestorePrompt = async function(silentConfirm, noReload) {
   if (!mfTokenValid() || !window._mfEncPassphrase) {
-    showToast('⚠️ Connect Drive first', 2000); return;
+    if (!noReload) showToast('⚠️ Connect Drive first', 2000);
+    return;
   }
   if (!silentConfirm) {
-    if (!confirm('⚠️ Restore from Drive?\n\nThis will OVERWRITE your current local data with the encrypted Drive backup.\n\nMake a local backup first if needed.')) return;
+    if (!confirm('⚠️ Restore from Drive?\n\nThis will OVERWRITE your current local data.\n\nMake a local backup first if needed.')) return;
   }
   try {
-    showToast('📥 Reading from Drive…', 2000);
-    // Always do a fresh search — don't rely on cached ID which may point to old file
+    if (!noReload) showToast('📥 Reading from Drive…', 2000);
     localStorage.removeItem(MF_FILE_ID_KEY);
     const fileId = await mfDriveFindFile();
-    if (!fileId) { showToast('❌ No backup file found on Drive', 3000); return; }
-    console.log('[MF Drive] Restoring from file ID:', fileId);
+    if (!fileId) { if (!noReload) showToast('❌ No backup file found on Drive', 3000); return; }
     const b64 = await mfDriveReadFile(fileId);
-    console.log('[MF Drive] Read b64 length:', b64?.length, 'first 40:', b64?.slice(0,40));
-    if (!b64 || b64.length < 50) {
-      showToast('❌ Drive file is empty or unreadable', 3000); return;
-    }
+    if (!b64 || b64.length < 50) { if (!noReload) showToast('❌ Drive file empty or unreadable', 3000); return; }
     let envelope;
     try {
       envelope = await mfDecrypt(b64.trim(), window._mfEncPassphrase);
-      console.log('[MF Drive] Decrypted keys:', envelope ? Object.keys(envelope) : 'null');
-    } catch(decryptErr) {
-      console.error('[MF Drive] Decrypt error:', decryptErr);
-      showToast('❌ Wrong passphrase — cannot decrypt backup', 3000);
+    } catch(e) {
+      if (!noReload) showToast('❌ Wrong passphrase — cannot decrypt backup', 3000);
       return;
     }
-    if (!envelope || !envelope.data) {
-      console.error('[MF Drive] Bad envelope:', JSON.stringify(envelope)?.slice(0,200));
-      showToast('❌ Backup file is empty or corrupted', 3000); return;
-    }
-    // Write restored data to localStorage — main app reads from here on reload
+    if (!envelope || !envelope.data) { if (!noReload) showToast('❌ Backup file empty or corrupted', 3000); return; }
     localStorage.setItem(MF_STORAGE_KEY, JSON.stringify(envelope.data));
     if (envelope._theme)    localStorage.setItem('mf_theme', envelope._theme);
     if (envelope._currency) localStorage.setItem('mf_currency', envelope._currency);
+    if (noReload) {
+      // In-session restore — reload data object without page refresh
+      try { data = JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '{}'); setTimeout(runRecurringScheduler, 500); } catch(e) {}
+      return;
+    }
     showToast('✅ Restored from Drive — reloading app…', 2000);
-    // Set flag so OAuth callback skips the "restore?" prompt on next load
     localStorage.setItem('mf_just_restored', '1');
     setTimeout(() => location.reload(), 2200);
   } catch(e) {
     console.error('Drive restore error:', e);
-    showToast('❌ Restore failed: ' + e.message, 3000);
+    if (!noReload) showToast('❌ Restore failed: ' + e.message, 3000);
   }
 };
-
 // ── Settings UI updates ───────────────────────────────────────────
 function mfUpdateDriveUI(connected) {
   const notConnected = document.getElementById('drive-not-connected');
@@ -39173,7 +39076,6 @@ function mfDriveInit() {
   }
 }
 
-// Called after Firebase auth — UID is available for device-secret auto-unlock
 async function mfDriveInitWithUID() {
   if (window._mfEncPassphrase) return; // already unlocked this session
 
@@ -39181,29 +39083,32 @@ async function mfDriveInitWithUID() {
   if (setup === 'skipped') return;
 
   if (setup === 'done') {
-    // Try auto-unlock using passphrase stored encrypted with UID
     const stored = await mfLoadStoredPassphrase();
     if (stored) {
       window._mfEncPassphrase = stored;
       console.log('[MF Drive] Auto-unlocked silently');
       mfInitTokenClient();
-      // Connect Drive automatically
+
+      // Auto-connect Drive and restore latest data seamlessly
       let _attempts = 0;
       const _tryConnect = () => {
         if (_tokenClient) {
           _tokenClient.requestAccessToken({ prompt: '' });
+          // After token granted, restore Drive data silently + re-render
+          // The OAuth callback handles this via _mfJustSetup=false path
         } else if (_attempts < 5) {
           _attempts++;
           setTimeout(_tryConnect, 800);
         }
       };
-      setTimeout(_tryConnect, 800);
+      setTimeout(_tryConnect, 600);
+
       // 30-day reminder
       if (mfShouldShowReminder()) {
         setTimeout(() => {
           showToast('🔐 Drive backup active — Settings → Zero-Knowledge Backup to manage', 4000);
           localStorage.setItem(MF_LAST_PP_CHECK, Date.now().toString());
-        }, 4000);
+        }, 5000);
       }
     } else {
       // No stored passphrase on this device — ask once
