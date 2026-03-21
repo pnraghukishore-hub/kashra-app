@@ -2729,6 +2729,22 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
 <!-- ══════════════ HOME ══════════════ -->
 <div class="screen active" id="screen-home">
 
+  <!-- ── EMPTY DATA RECOVERY BANNER (shown when no data + Drive not connected) ── -->
+  <div id="empty-data-banner" style="display:none;background:linear-gradient(135deg,#FFF7ED,#FFFBEB);border:1.5px solid #FDE68A;border-radius:16px;padding:16px 18px;margin-bottom:14px;">
+    <div style="font-weight:900;font-size:0.95em;color:#92400E;margin-bottom:6px;">🌅 Welcome back — let's restore your data</div>
+    <div style="font-size:0.78em;color:#78716C;font-weight:600;line-height:1.5;margin-bottom:12px;">Your data lives in your encrypted Google Drive backup. Connect Drive to restore everything automatically.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <button onclick="goToScreen('settings');setTimeout(()=>{const el=document.querySelector('[onclick*=\"acc-drive-backup\"]');if(el){el.scrollIntoView({behavior:'smooth'});el.click();}},500);"
+        style="background:#7C3AED;color:white;border:none;border-radius:10px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">
+        ☁️ Connect Drive
+      </button>
+      <label for="home-restore-json" style="background:#F3F4F6;color:#1E2A6E;border:none;border-radius:10px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;display:flex;align-items:center;justify-content:center;">
+        📂 Restore from JSON
+      </label>
+      <input type="file" id="home-restore-json" accept=".json" style="display:none;" onchange="restoreBackup(this)">
+    </div>
+  </div>
+
   <!-- Time Period Selector -->
   <div class="time-period-bar" id="time-period-bar">
     <button class="period-tab" data-i18n="day" onclick="setPeriod('day',this);trackFeature('period_day')">Day</button>
@@ -8763,7 +8779,22 @@ function _sharePulseWhatsApp(fhsScore) {
 
 function renderHome() {
   ensureMonth(viewMonth);
-  try { renderPulseRow(); } catch(e) {} // updates unseen dot only
+  try { renderPulseRow(); } catch(e) {}
+
+  // ── Empty data detection — show recovery banner ──
+  const emptyBanner = document.getElementById('empty-data-banner');
+  if (emptyBanner) {
+    const allMonthKeys = Object.keys(data).filter(k => /^\d{4}-\d{2}$/.test(k));
+    const hasAnyTxn   = allMonthKeys.some(k => {
+      const m = data[k] || {};
+      return (m.expenses||[]).length > 0 || (m.income||[]).length > 0 || (m.investments||[]).length > 0;
+    });
+    const hasNW = (data._nwAccounts || []).length > 0;
+    const driveConnected = !!(window._driveToken && window._mfEncPassphrase);
+    // Show banner if completely empty AND (Drive not connected OR Drive last backup was very recent = backed up empty state)
+    emptyBanner.style.display = (!hasAnyTxn && !hasNW) ? 'block' : 'none';
+  }
+
   const m = data[viewMonth];
 
   let expenses, income, investments, additional;
@@ -39071,11 +39102,25 @@ async function mfDriveReadFile(fileId) {
 // ── Save to Drive ──────────────────────────────────────────────────
 window.mfDriveSaveNow = async function() {
   if (!mfTokenValid() || !window._mfEncPassphrase) return;
+
+  // Safety guard — never overwrite Drive backup with empty data
+  const rawData = localStorage.getItem(MF_STORAGE_KEY);
+  const dataObj = rawData ? JSON.parse(rawData) : {};
+  const allMonthKeys = Object.keys(dataObj).filter(k => /^\d{4}-\d{2}$/.test(k));
+  const hasAnyData = allMonthKeys.some(k => {
+    const m = dataObj[k] || {};
+    return (m.expenses||[]).length > 0 || (m.income||[]).length > 0 || (m.investments||[]).length > 0;
+  }) || (dataObj._nwAccounts||[]).length > 0;
+  if (!hasAnyData) {
+    console.warn('[KashRA Drive] Backup skipped — data appears empty, refusing to overwrite Drive');
+    showSyncStatus('⚠️ Backup skipped — restore your data first', '#F59E0B', 4000);
+    return;
+  }
+
   mfSetDriveStatus('syncing');
   try {
     mfUpdateDriveStatusText('☁️ Backing up…', '#3B9EFF');
-    const rawData = localStorage.getItem(MF_STORAGE_KEY);
-    const dataObj = rawData ? JSON.parse(rawData) : {};
+    // dataObj already parsed above in the empty guard
     const envelope = {
       _mfVersion: 'MoneyFi-ZK-1.0',
       _savedAt: new Date().toISOString(),
@@ -39135,6 +39180,18 @@ window.mfDriveRestorePrompt = async function(silentConfirm, noReload) {
     if (noReload) {
       // In-session restore — reload data object without page refresh
       try { data = JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '{}'); setTimeout(runRecurringScheduler, 500); } catch(e) {}
+
+      // Warn if Drive backup contained empty data (backed up during clean-break window)
+      const allMonthKeys = Object.keys(data).filter(k => /^\d{4}-\d{2}$/.test(k));
+      const hasAnyData = allMonthKeys.some(k => {
+        const m = data[k] || {};
+        return (m.expenses||[]).length > 0 || (m.income||[]).length > 0;
+      }) || (data._nwAccounts||[]).length > 0;
+      if (!hasAnyData) {
+        showToast('⚠️ Drive backup appears empty — use JSON backup to restore your data', 6000);
+        mfSetDriveStatus('error', 'Backup contains no data');
+      }
+
       // Restore family credentials if present (enables family on PWA/new device)
       if (envelope._familyKey)  localStorage.setItem('mf_family_key',  envelope._familyKey);
       if (envelope._familyMeta) localStorage.setItem('mf_family_meta', envelope._familyMeta);
