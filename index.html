@@ -39707,6 +39707,7 @@ window.renderFamilyDashCard = async function() {
 
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
+  console.log('[MF Family] renderFamilyDashCard — meta:', meta?.familyId, 'hasKey:', !!keyBytes);
 
   // Hide card if not in a family
   if (!meta || !keyBytes) {
@@ -39870,6 +39871,11 @@ window.renderFamilyPanel = async function() {
 document.getElementById('mf-family-overlay')?.addEventListener('click', function(e) {
   if (e.target === this) mfHideFamilyModal();
 });
+
+// Trigger family dash card render after module loads
+setTimeout(() => {
+  if (typeof renderFamilyDashCard === 'function') renderFamilyDashCard();
+}, 800);
 
 })(); // end family IIFE
 </script>
