@@ -7322,8 +7322,9 @@ function save() {
     window._ownSaveTs = Date.now();
   }
   firebaseSave();
-  if (typeof mfDriveAutoSave === 'function') mfDriveAutoSave(); // Zero-knowledge Drive backup (debounced 5s)
-  if (typeof mfNWAutoSync   === 'function') mfNWAutoSync();    // Family NW sync (debounced 8s)
+  if (typeof mfDriveAutoSave === 'function') mfDriveAutoSave();
+  if (typeof mfNWAutoSync    === 'function') mfNWAutoSync();
+  if (typeof mfTxnsAutoSync  === 'function') mfTxnsAutoSync(viewMonth);
 }
 function fmt(n) { return sym()+Math.abs(Number(n)).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}); }
 function fmtFull(n) { return sym()+Math.abs(Number(n)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -7453,6 +7454,11 @@ function changePeriod(dir) {
   updatePeriodLabel();
   renderPeriodDetail();
   document.getElementById('topbar-month').textContent = getDisplayMonth(viewMonth);
+  // Load family txns for new month if not cached
+  if (typeof mfLoadFamilyTxns === 'function' && mfGetFamilyMeta &&
+      mfGetFamilyMeta() && !window._mfFamilyTxns[viewMonth]) {
+    mfLoadFamilyTxns(viewMonth).then(() => { renderHome(); renderTransactions(); });
+  }
   renderHome();
   renderTransactions();
 }
@@ -7523,8 +7529,15 @@ function togglePeriodView() {
 }
 
 // Get entries filtered by current period
-function getPeriodEntries(monthData, type) {
-  const entries = (monthData[type] || []);
+function getPeriodEntries(monthData, type, monthKey) {
+  // Own entries
+  const own = (monthData[type] || []);
+  // Family entries (from Firestore, cached)
+  const mk = monthKey || viewMonth;
+  const familyEntries = (typeof mfGetCombinedEntries === 'function' && mfGetFamilyMeta())
+    ? ((window._mfFamilyTxns[mk] || {})[type] || [])
+    : [];
+  const entries = [...own, ...familyEntries];
   if(currentPeriod === 'month' || currentPeriod === 'year') return entries;
   if(currentPeriod === 'day') {
     const d = selectedDay || localDateStr();
@@ -7546,6 +7559,10 @@ function getYearEntries(type) {
   let all = [];
   Object.keys(data).filter(k => k.startsWith(y+'-') && !k.startsWith('_')).forEach(k => {
     all = all.concat(data[k][type] || []);
+    // Merge family entries for this month
+    if (window._mfFamilyTxns && window._mfFamilyTxns[k]) {
+      all = all.concat(window._mfFamilyTxns[k][type] || []);
+    }
   });
   return all;
 }
@@ -39497,6 +39514,7 @@ async function mfDriveReadFamilyFileById(folderId, fileName) {
 
 const MF_FS_COLLECTION    = 'mf_family';    // Firestore collection for family manifests
 const MF_FS_REKEY_COLLECTION = 'mf_family_rekey'; // {familyId}_{memberUid} → new key delivery
+const MF_FS_TXNS_COLLECTION  = 'mf_family_txns';  // {familyId}_{uid}_{month} → shared transactions
 
 function mfGetDb() {
   return window._fbDb || (window._fbDb = firebase.firestore());
@@ -40074,6 +40092,107 @@ window.renderFamilyDashCard = async function() {
 
 const MF_FS_NW_COLLECTION = 'mf_family_nw'; // {familyId}_{uid}
 
+// ── FAMILY TRANSACTION SYNC ───────────────────────────────────────
+// Each member pushes their month transactions to Firestore.
+// All members read and merge into their local view.
+// _addedBy tag identifies who added what — author chips work automatically.
+
+window._mfFamilyTxns = {};  // cache: {month: [combined entries from all members]}
+let _mfTxnsSyncTimer = null;
+let _mfTxnsUnsubscribe = null;
+
+// Push MY transactions for a month to Firestore
+async function mfSyncFamilyTxns(monthKey) {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  const myUid  = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  if (!myUid) return;
+  const mData  = data[monthKey] || {};
+  const docId  = `${meta.familyId}_${myUid}_${monthKey}`;
+  try {
+    await mfGetDb().collection(MF_FS_TXNS_COLLECTION).doc(docId).set({
+      familyId:    meta.familyId,
+      uid:         myUid,
+      memberName:  meta.role === 'owner' ? meta.ownerName : (meta.myName || meta.ownerName),
+      month:       monthKey,
+      expenses:    mData.expenses    || [],
+      income:      mData.income      || [],
+      investments: mData.investments || [],
+      additional:  mData.additional  || [],
+      updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('[MF Family] Txns synced for', monthKey);
+  } catch(e) {
+    console.warn('[MF Family] Txn sync failed:', e.message);
+  }
+}
+
+// Auto-sync debounced — called after every save()
+window.mfTxnsAutoSync = function(monthKey) {
+  if (!mfGetFamilyMeta()) return;
+  clearTimeout(_mfTxnsSyncTimer);
+  _mfTxnsSyncTimer = setTimeout(() => mfSyncFamilyTxns(monthKey || viewMonth), 5000);
+};
+
+// Read ALL members' transactions for a month from Firestore → merge into cache
+async function mfLoadFamilyTxns(monthKey) {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  try {
+    const snap = await mfGetDb().collection(MF_FS_TXNS_COLLECTION)
+      .where('familyId', '==', meta.familyId)
+      .where('month', '==', monthKey)
+      .get();
+
+    const merged = { expenses:[], income:[], investments:[], additional:[] };
+    snap.docs.forEach(doc => {
+      const d = doc.data();
+      // Skip own data — already in local data object
+      if (d.uid === myUid) return;
+      const name = d.memberName || 'Family';
+      ['expenses','income','investments','additional'].forEach(type => {
+        (d[type] || []).forEach(t => {
+          merged[type].push({ ...t, _addedBy: t._addedBy || name, _fromFamily: true });
+        });
+      });
+    });
+    window._mfFamilyTxns[monthKey] = merged;
+    console.log('[MF Family] Loaded txns for', monthKey,
+      '— exp:', merged.expenses.length, 'inc:', merged.income.length);
+  } catch(e) {
+    console.warn('[MF Family] Load txns failed:', e.message);
+    window._mfFamilyTxns[monthKey] = null;
+  }
+}
+
+// Start real-time listener for family transactions
+function mfStartFamilyTxnsListener() {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
+  _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
+    .where('familyId', '==', meta.familyId)
+    .onSnapshot(snap => {
+      // Invalidate cache for changed months
+      snap.docChanges().forEach(change => {
+        const month = change.doc.data()?.month;
+        if (month) delete window._mfFamilyTxns[month];
+      });
+      // Re-render current view
+      try { renderHome(); } catch(e) {}
+      try { renderTransactions && renderTransactions(); } catch(e) {}
+      console.log('[MF Family] Txns updated from Firestore');
+    }, err => console.warn('[MF Family] Txns listener error:', err.message));
+}
+
+// Get combined entries for a month (own + family)
+window.mfGetCombinedEntries = function(monthKey, type) {
+  const own    = (data[monthKey] || {})[type] || [];
+  const family = (window._mfFamilyTxns[monthKey] || {})[type] || [];
+  return [...own, ...family];
+};
+
 // Push MY visible NW accounts to Firestore (called after every save())
 async function mfSyncMemberNW() {
   const meta     = mfGetFamilyMeta();
@@ -40399,10 +40518,15 @@ async function mfCheckRekey() {
 // Trigger family dash card render after module loads
 setTimeout(() => {
   // renderFamilyDashCard is called by renderHome() with 800ms debounce
-  // Just run the background tasks here
-  setTimeout(() => {
+  // Start real-time txns listener + background tasks
+  setTimeout(async () => {
     mfCheckRekey();
     mfSyncMemberNW();
+    mfSyncFamilyTxns(viewMonth);  // push own txns immediately
+    mfStartFamilyTxnsListener();  // listen for others' txns
+    await mfLoadFamilyTxns(viewMonth); // load others' txns
+    try { renderHome(); } catch(e) {}
+    try { renderTransactions && renderTransactions(); } catch(e) {}
   }, 3000);
 }, 800);
 
