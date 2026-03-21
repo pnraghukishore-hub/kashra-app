@@ -38699,6 +38699,13 @@ function mfInitTokenClient() {
       localStorage.setItem(MF_SETUP_KEY, 'done');
       mfUpdateDriveUI(true);
 
+      // If we just restored on previous load, skip the prompt — break the reload loop
+      if (localStorage.getItem('mf_just_restored') === '1') {
+        localStorage.removeItem('mf_just_restored');
+        showToast('✅ Google Drive connected', 2000);
+        return;
+      }
+
       // Check if a backup file already exists on Drive
       const existingId = await mfDriveFindFile();
       if (existingId) {
@@ -38891,7 +38898,8 @@ window.mfDriveRestorePrompt = async function(silentConfirm) {
     if (envelope._theme)    localStorage.setItem('mf_theme', envelope._theme);
     if (envelope._currency) localStorage.setItem('mf_currency', envelope._currency);
     showToast('✅ Restored from Drive — reloading app…', 2000);
-    // Reload after toast so user sees confirmation
+    // Set flag so OAuth callback skips the "restore?" prompt on next load
+    localStorage.setItem('mf_just_restored', '1');
     setTimeout(() => location.reload(), 2200);
   } catch(e) {
     console.error('Drive restore error:', e);
