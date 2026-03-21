@@ -39219,6 +39219,34 @@ async function mfWriteSharedFolderFile(folderId, fileName, b64Content) {
   return (await resp.json()).id;
 }
 
+// Read manifest directly by file ID (no Drive search — works cross-user)
+async function mfReadManifestById(fileId, keyBytes) {
+  console.log('[MF Family] Reading manifest by fileId:', fileId);
+  const resp = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+    { headers: { Authorization: 'Bearer ' + window._driveToken } }
+  );
+  if (!resp.ok) {
+    console.error('[MF Family] Read by ID failed:', resp.status, await resp.text());
+    return null;
+  }
+  const b64 = await resp.text();
+  return mfFamilyDecrypt(b64.trim(), keyBytes);
+}
+
+async function mfWriteManifestById(fileId, keyBytes, manifest) {
+  const b64 = await mfFamilyEncrypt(manifest, keyBytes);
+  const boundary = 'mff_' + Date.now();
+  const body = ['--'+boundary,'Content-Type: application/json; charset=UTF-8','',
+    '{}','--'+boundary,'Content-Type: text/plain','',b64,'--'+boundary+'--'].join('\r\n');
+  const resp = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&supportsAllDrives=true`,
+    { method:'PATCH', headers:{ Authorization:'Bearer '+window._driveToken,
+      'Content-Type':`multipart/related; boundary="${boundary}"`}, body }
+  );
+  if (!resp.ok) throw new Error('Manifest write failed: ' + resp.status);
+}
+
 // Keep old name as alias
 async function mfDriveReadFamilyFileById(folderId, fileName) {
   return mfReadSharedFolderFile(folderId, fileName);
@@ -39232,8 +39260,19 @@ async function mfReadManifest(folderId, keyBytes) {
 }
 
 async function mfWriteManifest(folderId, keyBytes, manifest) {
-  const b64 = await mfFamilyEncrypt(manifest, keyBytes);
-  await mfDriveWriteFamilyFile(folderId, MF_MANIFEST_FILE, b64);
+  const b64    = await mfFamilyEncrypt(manifest, keyBytes);
+  const fileId = await mfDriveWriteFamilyFile(folderId, MF_MANIFEST_FILE, b64);
+  // Make manifest file publicly accessible by file ID (no search needed by members)
+  if (fileId) {
+    try {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + window._driveToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'writer', type: 'anyone' })
+      });
+    } catch(e) { /* permission already set */ }
+  }
+  return fileId;
 }
 
 // ── CREATE FAMILY GROUP (Owner flow) ──────────────────────────────
@@ -39272,11 +39311,11 @@ window.mfFamilyCreate = async function() {
         status: 'active'
       }]
     };
-    await mfWriteManifest(folderId, keyBytes, manifest);
+    const manifestFileId = await mfWriteManifest(folderId, keyBytes, manifest);
 
     // 5. Save to localStorage
     mfSaveFamilyKey(keyBytes);
-    mfSaveFamilyMeta({ familyId, folderId, role: 'owner', ownerName });
+    mfSaveFamilyMeta({ familyId, folderId, manifestFileId, role: 'owner', ownerName });
 
     // 6. Show invite screen
     mfHideFamilyModal();
@@ -39314,6 +39353,7 @@ window.mfFamilyShowInvite = async function() {
     v: 1,
     familyId: meta.familyId,
     folderId: meta.folderId,
+    manifestFileId: meta.manifestFileId || null,
     ownerName: meta.ownerName,
     keyB64,
     expires: Date.now() + MF_INVITE_EXPIRY_MS
@@ -39364,24 +39404,22 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
-  console.log('[MF Family] token:', !!window._driveToken, 'folderId:', payload.folderId);
+  console.log('[MF Family] manifestFileId:', payload.manifestFileId, 'folderId:', payload.folderId);
 
   try {
-    // Read manifest from owner's shared folder using supportsAllDrives
-    console.log('[MF Family] Reading manifest from folder:', payload.folderId);
-    const manifestB64 = await mfReadSharedFolderFile(payload.folderId, MF_MANIFEST_FILE);
-    console.log('[MF Family] Manifest b64 length:', manifestB64?.length);
-    if (!manifestB64) {
-      showToast('❌ Could not reach family folder — check internet connection', 3000); return;
+    let manifest = null;
+    if (payload.manifestFileId) {
+      console.log('[MF Family] Reading by file ID:', payload.manifestFileId);
+      manifest = await mfReadManifestById(payload.manifestFileId, keyBytes);
     }
-
-    let manifest;
-    try {
-      manifest = await mfFamilyDecrypt(manifestB64.trim(), keyBytes);
-      console.log('[MF Family] Manifest decrypted, members:', manifest?.members?.length);
-    } catch(e) {
-      console.error('[MF Family] Decrypt error:', e);
-      showToast('❌ Could not decrypt family data — invite code may be wrong', 3000); return;
+    if (!manifest) {
+      console.log('[MF Family] Fallback: folder search');
+      const b64 = await mfReadSharedFolderFile(payload.folderId, MF_MANIFEST_FILE);
+      if (b64) { try { manifest = await mfFamilyDecrypt(b64.trim(), keyBytes); } catch(e) {} }
+    }
+    console.log('[MF Family] Manifest:', manifest ? 'OK members='+manifest.members?.length : 'null');
+    if (!manifest) {
+      showToast('❌ Could not read family data — ask owner to tap Invite Member again', 4000); return;
     }
 
     const activeCount = (manifest.members || []).filter(m => m.status === 'active').length;
@@ -39395,12 +39433,18 @@ window.mfFamilyJoin = async function() {
       joinedAt: new Date().toISOString(), status: 'active'
     });
 
-    const updatedB64 = await mfFamilyEncrypt(manifest, keyBytes);
-    await mfWriteSharedFolderFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
+    // Write updated manifest back
+    if (payload.manifestFileId) {
+      await mfWriteManifestById(payload.manifestFileId, keyBytes, manifest);
+    } else {
+      const updatedB64 = await mfFamilyEncrypt(manifest, keyBytes);
+      await mfWriteSharedFolderFile(payload.folderId, MF_MANIFEST_FILE, updatedB64);
+    }
 
     mfSaveFamilyKey(keyBytes);
     mfSaveFamilyMeta({
       familyId: payload.familyId, folderId: payload.folderId,
+      manifestFileId: payload.manifestFileId || null,
       role: 'member', ownerName: payload.ownerName,
       myUid: memberId, myName: memberName
     });
