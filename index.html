@@ -38626,7 +38626,20 @@ window.mfPPSetup = async function() {
 
   mfHidePassphraseModal();
   showToast('🔐 Passphrase set — connecting Drive…', 2000);
-  mfDriveConnect();
+  // GIS needs a moment to initialise — retry up to 3 times
+  mfInitTokenClient();
+  let _connectAttempts = 0;
+  const _tryConnect = () => {
+    if (_tokenClient) {
+      _tokenClient.requestAccessToken({ prompt: '' });
+    } else if (_connectAttempts < 5) {
+      _connectAttempts++;
+      setTimeout(_tryConnect, 800);
+    } else {
+      showToast('⚠️ Could not auto-connect — tap Connect Drive in Settings', 3000);
+    }
+  };
+  setTimeout(_tryConnect, 600);
 };
 
 // ── Passphrase unlock (returning user) ────────────────────────────
@@ -38638,7 +38651,19 @@ window.mfPPUnlock = async function() {
   window._mfEncPassphrase = p;
   mfHidePassphraseModal();
   showToast('🔓 Passphrase accepted — connecting Drive…', 2000);
-  mfDriveConnect();
+  mfInitTokenClient();
+  let _uAttempts = 0;
+  const _uTryConnect = () => {
+    if (_tokenClient) {
+      _tokenClient.requestAccessToken({ prompt: '' });
+    } else if (_uAttempts < 5) {
+      _uAttempts++;
+      setTimeout(_uTryConnect, 800);
+    } else {
+      showToast('⚠️ Could not auto-connect — tap Connect Drive in Settings', 3000);
+    }
+  };
+  setTimeout(_uTryConnect, 600);
 };
 
 window.mfPPSkip = function() {
@@ -38832,17 +38857,27 @@ window.mfDriveRestorePrompt = async function(silentConfirm) {
   }
   try {
     showToast('📥 Reading from Drive…', 2000);
+    // Always do a fresh search — don't rely on cached ID which may point to old file
+    localStorage.removeItem(MF_FILE_ID_KEY);
     const fileId = await mfDriveFindFile();
     if (!fileId) { showToast('❌ No backup file found on Drive', 3000); return; }
+    console.log('[MF Drive] Restoring from file ID:', fileId);
     const b64 = await mfDriveReadFile(fileId);
+    console.log('[MF Drive] Read b64 length:', b64?.length, 'first 40:', b64?.slice(0,40));
+    if (!b64 || b64.length < 50) {
+      showToast('❌ Drive file is empty or unreadable', 3000); return;
+    }
     let envelope;
     try {
-      envelope = await mfDecrypt(b64, window._mfEncPassphrase);
+      envelope = await mfDecrypt(b64.trim(), window._mfEncPassphrase);
+      console.log('[MF Drive] Decrypted keys:', envelope ? Object.keys(envelope) : 'null');
     } catch(decryptErr) {
+      console.error('[MF Drive] Decrypt error:', decryptErr);
       showToast('❌ Wrong passphrase — cannot decrypt backup', 3000);
       return;
     }
     if (!envelope || !envelope.data) {
+      console.error('[MF Drive] Bad envelope:', JSON.stringify(envelope)?.slice(0,200));
       showToast('❌ Backup file is empty or corrupted', 3000); return;
     }
     // Write restored data to localStorage — main app reads from here on reload
