@@ -38980,7 +38980,10 @@ window.mfDriveSaveNow = async function() {
       _savedAt: new Date().toISOString(),
       _theme: localStorage.getItem('mf_theme') || 'default',
       _currency: localStorage.getItem('mf_currency') || null,
-      data: dataObj
+      data: dataObj,
+      _familyKey:  localStorage.getItem('mf_family_key')  || null,
+      _familyMeta: localStorage.getItem('mf_family_meta') || null,
+      _storedPP:   localStorage.getItem('mf_enc_pp') || null,
     };
     const b64 = await mfEncrypt(envelope, window._mfEncPassphrase);
     await mfDriveWriteFile(b64);
@@ -39031,10 +39034,26 @@ window.mfDriveRestorePrompt = async function(silentConfirm, noReload) {
     if (noReload) {
       // In-session restore — reload data object without page refresh
       try { data = JSON.parse(localStorage.getItem(MF_STORAGE_KEY) || '{}'); setTimeout(runRecurringScheduler, 500); } catch(e) {}
+      // Restore family credentials if present (enables family on PWA/new device)
+      if (envelope._familyKey)  localStorage.setItem('mf_family_key',  envelope._familyKey);
+      if (envelope._familyMeta) localStorage.setItem('mf_family_meta', envelope._familyMeta);
+      if (envelope._storedPP)   localStorage.setItem('mf_enc_pp', envelope._storedPP);
       localStorage.setItem(MF_LAST_RESTORE_KEY, new Date().toISOString());
       if (typeof mfOnBackupSuccess === 'function') mfOnBackupSuccess();
+      // Re-init family features with restored credentials
+      if (envelope._familyKey) {
+        setTimeout(() => {
+          try { renderFamilyDashCard && renderFamilyDashCard(); } catch(e) {}
+          try { mfStartFamilyTxnsListener && mfStartFamilyTxnsListener(); } catch(e) {}
+          try { mfLoadFamilyTxns && mfLoadFamilyTxns(viewMonth); } catch(e) {}
+        }, 500);
+      }
       return;
     }
+    // Restore family credentials before page reload
+    if (envelope._familyKey)  localStorage.setItem('mf_family_key',  envelope._familyKey);
+    if (envelope._familyMeta) localStorage.setItem('mf_family_meta', envelope._familyMeta);
+    if (envelope._storedPP)   localStorage.setItem('mf_enc_pp', envelope._storedPP);
     showToast('✅ Restored from Drive — reloading app…', 2000);
     localStorage.setItem('mf_just_restored', '1');
     setTimeout(() => location.reload(), 2200);
