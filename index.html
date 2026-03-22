@@ -2702,7 +2702,15 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
 <div class="topbar">
   <div class="topbar-title">💰 MoneyFi</div>
   <div style="display:flex;align-items:center;gap:8px;">
-    <div class="topbar-badge" id="topbar-month" style="cursor:default;">Feb 2026</div>
+    <!-- Status indicators: Drive + Family -->
+    <div id="topbar-status" style="display:flex;align-items:center;gap:5px;">
+      <div id="drive-status-dot" title="Drive backup"
+        style="width:9px;height:9px;border-radius:50%;background:#ccc;transition:background 0.4s;flex-shrink:0;"></div>
+      <div id="family-status-dot" title="Family sync"
+        style="width:9px;height:9px;border-radius:50%;background:transparent;flex-shrink:0;display:none;"></div>
+    </div>
+    <!-- Month badge kept hidden for JS compat but not displayed -->
+    <div id="topbar-month" style="display:none;">Feb 2026</div>
     <div class="topbar-icons">
       <button class="pulse-topbar-btn" id="pulse-topbar-btn" onclick="togglePulsePanel();trackFeature('pulse_stories')" title="MoneyFi Pulse">
         🔮
@@ -38587,7 +38595,8 @@ const DISC_THEMES = [
       nav:()=>{ goToScreen('settings');
         setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
           if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
-            setTimeout(()=>{ _discSpotlight(el,'Create a private encrypted family group. Each member keeps their own data; you only share what you choose.','Create Family Group'); el.click(); }, 350); }
+            setTimeout(()=>_discSpotlight(el,'Tap here to open Family & Shared Finances — create a private encrypted group where each member keeps their own data.','Create Family Group'), 500);
+          }
         }, 500); },
       spot:'[onclick*="acc-family"]', tip:'Create a private family group — share only what you choose.' },
 
@@ -38595,20 +38604,36 @@ const DISC_THEMES = [
       label:'Invite Members',
       nav:()=>{ goToScreen('settings');
         setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
-          if(el){ el.click();
-            setTimeout(()=>{ const invBtn=document.querySelector('[onclick*="mfFamilyShowInvite"]');
-              if(invBtn) _discSpotlight(invBtn,'Tap Invite Member — share the QR code or invite link. Expires in 24 hours for security.','Invite Members');
-            }, 400); }
+          if(el){
+            // Open the accordion first
+            if(!el.getAttribute('data-open')) el.click();
+            // Wait for panel to expand, then find invite button
+            setTimeout(()=>{
+              const invBtn=document.querySelector('[onclick*="mfFamilyShowInvite"]');
+              if(invBtn){ invBtn.scrollIntoView({behavior:'smooth',block:'center'});
+                setTimeout(()=>_discSpotlight(invBtn,'Tap Invite Member to share a QR code or invite link. Expires in 24 hours for security.','Invite Members'), 300);
+              } else {
+                // Panel open but no invite button = not owner or family not created yet
+                _discSpotlight(el,'Create or join a family group first — then the Invite Member button will appear here.','Invite Members');
+              }
+            }, 700); }
         }, 500); },
       spot:'[onclick*="mfFamilyShowInvite"]', tip:'Invite via QR code or link — expires in 24 hours for security.' },
 
     { id:'family_dashboard_disc',
       label:'Family Dashboard Card',
-      nav:()=>{ const card=document.getElementById('family-dash-card');
-        if(card && card.style.display!=='none'){ card.scrollIntoView({behavior:'smooth',block:'center'});
-          setTimeout(()=>_discSpotlight('#family-dash-card','Family card on Home shows combined household spending and NW. Tap any member chip to see their individual contribution and NW share.','Family Dashboard'), 400);
-        } else { showToast('Join or create a family group first', 2000); }
-      },
+      nav:()=>{
+        // Must be on Home screen — switch first
+        goToScreen('home');
+        setTimeout(()=>{
+          const card=document.getElementById('family-dash-card');
+          if(card && card.style.display!=='none'){
+            card.scrollIntoView({behavior:'smooth',block:'center'});
+            setTimeout(()=>_discSpotlight('#family-dash-card','This is the Family card — shows combined household spending, net worth, and per-member breakdown. Tap any member chip for their spotlight.','Family Dashboard'), 400);
+          } else {
+            showToast('Join or create a family group to see the Family card', 2500);
+          }
+        }, 500); },
       spot:'#family-dash-card', tip:'Family card shows combined spending, NW, and per-member spotlight.' },
 
     { id:'family_nw_bulk',
@@ -38632,11 +38657,18 @@ const DISC_THEMES = [
       label:'Automatic Key Rotation',
       nav:()=>{ goToScreen('settings');
         setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
-          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
-            setTimeout(()=>_discSpotlight(el,'When a member is removed, the family encryption key rotates automatically. The removed member loses access; remaining members get the new key silently on next open.','Key Rotation'), 400);
+          if(el){
+            if(!el.getAttribute('data-open')) el.click();
+            setTimeout(()=>{
+              // Try to spotlight a Remove button, fall back to family panel
+              const removeBtn = document.querySelector('[onclick*="mfFamilyRemoveMember"]');
+              const target = removeBtn || el;
+              if(target) target.scrollIntoView({behavior:'smooth',block:'center'});
+              setTimeout(()=>_discSpotlight(target,'When you tap Remove on a member, the family encryption key rotates automatically — the removed member loses access to all future data.','Key Rotation'), 300);
+            }, 700);
           }
         }, 500); },
-      spot:'[onclick*="acc-family"]', tip:'Removing a member auto-rotates the family key — departed member loses access.' },
+      spot:'[onclick*="mfFamilyRemoveMember"]', tip:'Removing a member auto-rotates the family key — departed member loses access.' },
 
   ]}
 ];
@@ -39253,6 +39285,11 @@ function mfInitTokenClient() {
       mfUpdateDriveUI(true);
       // Schedule silent refresh before token expires
       if (typeof mfScheduleTokenRefresh === 'function') mfScheduleTokenRefresh();
+      // Reset retry counter on successful token
+      if (typeof _driveRetryCount !== 'undefined') _driveRetryCount = 0;
+      if (typeof _driveRetryTimer !== 'undefined' && _driveRetryTimer) {
+        clearTimeout(_driveRetryTimer); _driveRetryTimer = null;
+      }
 
       // If we just restored on previous load, skip the prompt — break the reload loop
       if (localStorage.getItem('mf_just_restored') === '1') {
@@ -39352,16 +39389,47 @@ function mfScheduleTokenRefresh() {
   console.log('[KashRA] Token refresh scheduled in', Math.round(msUntilRefresh/60000), 'min');
 }
 
+let _driveRetryTimer = null;
+let _driveRetryCount = 0;
+
 function mfSilentTokenRefresh() {
   if (!_tokenClient) return;
-  if (!window._fbUser) return; // not signed in
+  if (!window._fbUser) return;
   console.log('[KashRA] Silently refreshing Drive token…');
-  // GIS silent refresh — no popup if session still valid
   try {
     _tokenClient.requestAccessToken({ prompt: '' });
+    // On success the token callback fires → schedules next refresh + resets retry
   } catch(e) {
     console.warn('[KashRA] Silent token refresh failed:', e.message);
+    mfDriveRetryConnect();
   }
+}
+
+// Retry with exponential backoff — silently, no user interruption
+function mfDriveRetryConnect() {
+  if (_driveRetryTimer) return; // already retrying
+  if (_driveRetryCount >= 5) {
+    console.warn('[KashRA] Drive retry limit reached — showing reconnect prompt');
+    mfSetDriveStatus('disconnected', 'Tap to reconnect');
+    _driveRetryCount = 0;
+    return;
+  }
+  const delayMs = Math.min(30000, 3000 * Math.pow(2, _driveRetryCount)); // 3s, 6s, 12s, 24s, 30s
+  _driveRetryCount++;
+  console.log('[KashRA] Drive retry', _driveRetryCount, 'in', delayMs/1000, 's');
+  _driveRetryTimer = setTimeout(() => {
+    _driveRetryTimer = null;
+    mfSilentTokenRefresh();
+  }, delayMs);
+}
+
+// Called when Drive save/read fails with 401 — trigger retry
+function mfDriveHandleAuthError() {
+  console.warn('[KashRA] Drive auth error — scheduling reconnect');
+  mfSetDriveStatus('disconnected', 'Reconnecting…');
+  window._driveToken = null;
+  window._driveTokenExpiry = null;
+  mfDriveRetryConnect();
 }
 
 // ── Drive REST API helpers ─────────────────────────────────────────
@@ -39617,6 +39685,10 @@ window.mfDriveSaveNow = async function() {
   } catch(e) {
     mfUpdateDriveStatusText('⚠️ Backup failed — will retry', '#F59E0B');
     mfOnBackupFail(e); // ← reliability layer
+    // If 401/auth error, trigger silent reconnect
+    if (e.message && (e.message.includes('401') || e.message.includes('auth') || e.message.includes('token'))) {
+      mfDriveHandleAuthError();
+    }
   }
 };
 
@@ -39718,6 +39790,15 @@ function mfSetDriveStatus(status, detail) {
   localStorage.setItem(MF_DRIVE_STATUS_KEY, status);
   mfUpdateDriveUI(status === 'ok' || status === 'syncing');
   mfUpdateDrivePersistentBadge(status, detail);
+  // Update topbar Drive dot
+  const dot = document.getElementById('drive-status-dot');
+  if (dot) {
+    const colors = {ok:'#22c55e', syncing:'#3b82f6', error:'#ef4444', offline:'#f59e0b', disconnected:'#9ca3af'};
+    dot.style.background = colors[status] || '#9ca3af';
+    dot.title = 'Drive: ' + (status === 'ok' ? 'synced' : status);
+    if (status === 'syncing') dot.style.animation = 'pulse 1s infinite';
+    else dot.style.animation = '';
+  }
 }
 
 // Small persistent badge in Settings Drive accordion header
@@ -40995,6 +41076,17 @@ async function mfLoadFamilyTxns(monthKey) {
 // Start real-time listener for family transactions
 function mfStartFamilyTxnsListener() {
   const meta = mfGetFamilyMeta();
+  // Update family dot in topbar
+  const fdot = document.getElementById('family-status-dot');
+  if (fdot) {
+    if (meta) {
+      fdot.style.display = 'block';
+      fdot.style.background = '#a855f7';
+      fdot.title = 'Family: ' + (meta.ownerName || 'connected');
+    } else {
+      fdot.style.display = 'none';
+    }
+  }
   if (!meta) return;
   if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
 
