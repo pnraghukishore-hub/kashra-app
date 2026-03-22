@@ -11602,50 +11602,137 @@ function familyDeleteByKey(monthKey, type, fkey) {
   familyDeleteTxByIdx(monthKey, type, idx);
 }
 
+// ── COMMAND QUEUE ─────────────────────────────────────────────────────────────
+// Owner issues commands (delete/edit) into Firestore mf_family_cmds.
+// Member's device processes pending commands on next open BEFORE syncing Drive.
+// This ensures the command propagates to member's Drive — making it permanent.
+
+async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, payload) {
+  const meta = mfGetFamilyMeta();
+  if (!meta || meta.role !== 'owner') return;
+  const cmdDoc = {
+    familyId:     meta.familyId,
+    targetUid,
+    command,           // 'delete' | 'edit'
+    monthKey,
+    type,
+    fingerprint,       // "category|amount|date"
+    payload:      payload || null,
+    issuedBy:     meta.myUid || meta.familyId + '_owner',
+    issuedByName: meta.ownerName,
+    issuedAt:     firebase.firestore.FieldValue.serverTimestamp(),
+    status:       'pending'
+  };
+  try {
+    await mfGetDb().collection(MF_FS_CMD_COLLECTION).add(cmdDoc);
+    console.log('[MF Cmd] Issued', command, 'for', targetUid, fingerprint);
+  } catch(e) {
+    console.warn('[MF Cmd] Issue failed:', e.message);
+    showToast('⚠️ Command queued — will sync when online', 2500);
+  }
+}
+
+// Called by each member on app open / visibilitychange — drains pending commands
+// before Drive sync so changes propagate to member's source of truth
+async function mfProcessPendingCommands() {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  if (!myUid) return;
+
+  let snap;
+  try {
+    snap = await mfGetDb().collection(MF_FS_CMD_COLLECTION)
+      .where('familyId', '==', meta.familyId)
+      .where('targetUid', '==', myUid)
+      .where('status', '==', 'pending')
+      .get();
+  } catch(e) {
+    console.warn('[MF Cmd] Query failed:', e.message);
+    return;
+  }
+
+  if (snap.empty) return;
+  console.log('[MF Cmd] Processing', snap.size, 'pending commands');
+
+  let anyChange = false;
+  const typeMap = {expenses:'expenses', income:'income', investments:'investments',
+                   additional:'additional', expense:'expenses', investment:'investments'};
+
+  for (const cmdDoc of snap.docs) {
+    const cmd = cmdDoc.data();
+    const listKey = typeMap[cmd.type] || cmd.type;
+    const mk = cmd.monthKey;
+    if (!data[mk] || !data[mk][listKey]) {
+      await cmdDoc.ref.update({status:'skipped_no_month'});
+      continue;
+    }
+    const list = data[mk][listKey];
+    const [fpCat, fpAmt, fpDate] = (cmd.fingerprint || '').split('|');
+    const txIdx = list.findIndex(t =>
+      String(t.category || '').toLowerCase() === String(fpCat || '').toLowerCase() &&
+      Math.abs(Number(t.amount)) === Math.abs(Number(fpAmt)) &&
+      (t.date || '') === fpDate
+    );
+
+    if (txIdx === -1) {
+      await cmdDoc.ref.update({status:'skipped_not_found'});
+      continue;
+    }
+
+    if (cmd.command === 'delete') {
+      list.splice(txIdx, 1);
+      anyChange = true;
+      console.log('[MF Cmd] Deleted:', cmd.fingerprint, 'from', mk);
+    } else if (cmd.command === 'edit' && cmd.payload) {
+      const original = list[txIdx];
+      list[txIdx] = { ...cmd.payload, _addedBy: original._addedBy,
+        _editedBy: cmd.issuedByName || 'Owner', _editedAt: new Date().toISOString() };
+      anyChange = true;
+      console.log('[MF Cmd] Edited:', cmd.fingerprint, 'in', mk);
+    }
+
+    await cmdDoc.ref.update({status:'applied',
+      appliedAt: firebase.firestore.FieldValue.serverTimestamp()});
+  }
+
+  if (anyChange) {
+    // Save to Drive → command is now permanent in member's source of truth
+    save();
+    const changedMonths = [...new Set(snap.docs.map(d => d.data().monthKey))];
+    changedMonths.forEach(mk => { if (typeof mfTxnsAutoSync === 'function') mfTxnsAutoSync(mk); });
+    try { renderHome(); } catch(e) {}
+    try { renderTransactions && renderTransactions(); } catch(e) {}
+    showToast('🔄 Family ledger updated by owner', 2500);
+  }
+}
+
 function familyDeleteTxByIdx(monthKey, type, idx) {
-  const typeMap = {expense:'expenses',income:'income',investment:'investments',additional:'additional'};
+  const typeMap = {expense:'expenses', income:'income', investment:'investments', additional:'additional'};
   const listKey = typeMap[type];
   const familyM = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
-  // idx is position in the rendered (sorted) merged array — look up by position in familyM list
-  const list = familyM[listKey] || [];
-  let ft = list[idx];
-  // Fallback: if idx is out of range (can happen after dedup), search by matching rendered transaction
-  if (!ft && list.length > 0) {
-    // Use the rendered element's data attributes to find by category+amount
-    ft = list[0]; // best effort — show confirm with first item
-  }
+  const ft = (familyM[listKey] || [])[idx];
   if (!ft) { showToast('Transaction not found', 2000); return; }
 
-  const meta = typeof mfGetFamilyMeta === 'function' ? mfGetFamilyMeta() : null;
-  const addedBy = ft._addedBy || 'a family member';
-
-  if (meta && meta.role === 'owner') {
-    if (!confirm(`Delete "${ft.category}" added by ${addedBy}?
-
-This will remove it from the family ledger.`)) return;
-    // Remove from local cache
-    familyM[listKey].splice(idx, 1);
-    // Remove from Firestore
-    const memberUid = ft._memberUid;
-    if (memberUid) {
-      const docId = `${meta.familyId}_${memberUid}_${monthKey}`;
-      firebase.firestore().collection('mf_family_txns').doc(docId).get().then(doc => {
-        if (!doc.exists) return;
-        const d = doc.data();
-        const updList = (d[listKey] || []).filter(t =>
-          !(String(t.category) === String(ft.category) &&
-            Math.abs(Number(t.amount)) === Math.abs(Number(ft.amount)) &&
-            t.date === ft.date)
-        );
-        const update = {}; update[listKey] = updList;
-        doc.ref.update(update);
-      }).catch(e => console.warn('Family delete failed:', e.message));
-    }
-    renderHome(); renderTransactions && renderTransactions();
-    showToast('🗑 Deleted from family ledger');
-  } else {
-    showToast(`⚠️ Added by ${addedBy} — only they can delete it`, 3000);
+  const meta = mfGetFamilyMeta();
+  if (!meta || meta.role !== 'owner') {
+    showToast('⚠️ Ask ' + (ft._addedBy || 'member') + ' to delete on their device', 3000);
+    return;
   }
+
+  const addedBy = ft._addedBy || 'a family member';
+  if (!confirm('Delete "' + ft.category + '" (' + addedBy + ') from the family ledger?\n\nThis will remove it from their device on next sync.')) return;
+
+  // Remove from owner's local cache immediately
+  familyM[listKey].splice(idx, 1);
+  renderHome();
+  renderTransactions && renderTransactions();
+
+  // Issue command → propagates to member's Drive on their next open
+  const fingerprint = ft.category + '|' + ft.amount + '|' + ft.date;
+  mfIssueCommand(ft._memberUid, 'delete', monthKey, listKey, fingerprint, null)
+    .then(() => showToast('🗑 Deleted — member device will sync on next open', 2500))
+    .catch(() => showToast('🗑 Removed locally — sync pending', 2000));
 }
 
 function listFamilyOrOwnDelete(btn) {
@@ -31168,6 +31255,10 @@ function showSyncStatus(msg, color='#10B981', duration=2500) {
 // When user returns to the tab, clear any "Saving..." bar that's been stuck > 15s.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  // Check for pending owner commands when app comes to foreground
+  if (typeof mfProcessPendingCommands === 'function' && typeof mfGetFamilyMeta === 'function' && mfGetFamilyMeta()) {
+    mfProcessPendingCommands().catch(e => console.warn('[MF Cmd] vis:', e.message));
+  }
   const bar = document.getElementById('sync-status-bar');
   if (!bar || bar.style.display === 'none') return;
   const stuckMs = Date.now() - (bar._shownAt || 0);
@@ -39344,6 +39435,143 @@ async function mfDriveReadFile(fileId) {
 }
 
 // ── Save to Drive ──────────────────────────────────────────────────
+
+// ── DRIVE MERGE — resolves two-phone offline conflict ─────────────────────────
+// Called before every Drive write. Reads current Drive backup, merges with local,
+// then writes the union. Safe to call even on first-ever save (Drive returns null).
+//
+// Strategy per data type:
+//   Transactions (expenses/income etc): union by fingerprint (date|category|amount)
+//   NW accounts:  union by account id — local takes precedence on same id
+//   Goals:        union by goal id — local takes precedence
+//   Budget goals: local always wins (settings, not events)
+//   FHS / profile: local always wins
+
+function _txFingerprint(t) {
+  return (t.date||'') + '|' + (t.category||'').toLowerCase() + '|' + String(Math.abs(Number(t.amount||0)));
+}
+
+function _mergeMonthTxns(local, remote) {
+  // Union: keep all unique transactions from both sides
+  // If same fingerprint exists in both, prefer local (most recently edited device wins)
+  const seen = {};
+  const result = [];
+  (local || []).forEach(t => {
+    const fp = _txFingerprint(t);
+    seen[fp] = true;
+    result.push(t);
+  });
+  (remote || []).forEach(t => {
+    const fp = _txFingerprint(t);
+    if (!seen[fp]) {
+      seen[fp] = true;
+      result.push(t);  // add remote-only transaction — was added on other device
+    }
+  });
+  // Sort by date descending for consistency
+  return result.sort((a, b) => (b.date||'') > (a.date||'') ? 1 : -1);
+}
+
+function _mergeDataObjects(localData, remoteData) {
+  if (!remoteData) return localData;  // no remote data yet — nothing to merge
+  if (!localData)  return remoteData;
+
+  const merged = { ...localData };
+
+  // Merge month keys — transactions
+  const allMonths = new Set([
+    ...Object.keys(localData).filter(k => /^\d{4}-\d{2}$/.test(k)),
+    ...Object.keys(remoteData).filter(k => /^\d{4}-\d{2}$/.test(k))
+  ]);
+
+  allMonths.forEach(mk => {
+    const localMonth  = localData[mk]  || {};
+    const remoteMonth = remoteData[mk] || {};
+    merged[mk] = {
+      ...localMonth,
+      expenses:    _mergeMonthTxns(localMonth.expenses,    remoteMonth.expenses),
+      income:      _mergeMonthTxns(localMonth.income,      remoteMonth.income),
+      investments: _mergeMonthTxns(localMonth.investments, remoteMonth.investments),
+      additional:  _mergeMonthTxns(localMonth.additional,  remoteMonth.additional),
+      debts:       _mergeMonthTxns(localMonth.debts,       remoteMonth.debts),
+      givenToOthers: _mergeMonthTxns(localMonth.givenToOthers, remoteMonth.givenToOthers),
+    };
+  });
+
+  // Merge NW accounts — union by id, local wins on conflict
+  const localAccounts  = localData._nwAccounts  || [];
+  const remoteAccounts = remoteData._nwAccounts || [];
+  const accountIds = new Set(localAccounts.map(a => a.id));
+  merged._nwAccounts = [
+    ...localAccounts,
+    ...remoteAccounts.filter(a => !accountIds.has(a.id))  // add remote-only accounts
+  ];
+
+  // Merge goals — union by id, local wins
+  const localGoals  = localData._goals  || localData._financialGoals  || [];
+  const remoteGoals = remoteData._goals || remoteData._financialGoals || [];
+  const goalIds = new Set(localGoals.map(g => g.id));
+  const mergedGoals = [
+    ...localGoals,
+    ...remoteGoals.filter(g => !goalIds.has(g.id))
+  ];
+  merged._goals = mergedGoals;
+  merged._financialGoals = mergedGoals;
+
+  // Budget goals — local wins (user preference, not event data)
+  // _nwCustomTypes, _fhsProfile, _equitySectorOverrides — local wins (already in spread)
+
+  return merged;
+}
+
+async function mfDriveMergeAndSave(localEnvelope) {
+  // Step 1: Try to read current Drive backup
+  let remoteData = null;
+  try {
+    const fileId = await mfDriveFindFile();
+    if (fileId) {
+      const b64 = await mfDriveReadFile(fileId);
+      if (b64 && b64.length > 50) {
+        const remoteEnvelope = await mfDecrypt(b64.trim(), window._mfEncPassphrase);
+        if (remoteEnvelope?.data) {
+          remoteData = remoteEnvelope.data;
+          // Only merge if remote was saved more recently than our last known sync
+          // This avoids unnecessary merges when Drive is just our own last save
+          const remoteSavedAt = new Date(remoteEnvelope._savedAt || 0).getTime();
+          const lastSync = new Date(localStorage.getItem(MF_LAST_RESTORE_KEY) || 0).getTime();
+          if (remoteSavedAt <= lastSync) {
+            remoteData = null; // Remote is our own last save — skip merge
+            console.log('[Drive Merge] Skipped — remote is our own last save');
+          } else {
+            console.log('[Drive Merge] Remote is newer than last sync — merging');
+          }
+        }
+      }
+    }
+  } catch(e) {
+    console.warn('[Drive Merge] Could not read remote for merge:', e.message);
+    // Continue with local-only save — merge not possible
+  }
+
+  // Step 2: Merge if remote has newer changes
+  if (remoteData) {
+    const merged = _mergeDataObjects(localEnvelope.data, remoteData);
+    // Update local data with merged result so UI is consistent
+    try {
+      localStorage.setItem(MF_STORAGE_KEY, JSON.stringify(merged));
+      if (typeof data !== 'undefined') Object.assign(data, merged);
+    } catch(e) { console.warn('[Drive Merge] Could not update local:', e.message); }
+    localEnvelope.data = merged;
+    console.log('[Drive Merge] Merge complete — writing merged data to Drive');
+  }
+
+  // Step 3: Write merged (or original) data to Drive
+  const b64 = await mfEncrypt(localEnvelope, window._mfEncPassphrase);
+  await mfDriveWriteFile(b64);
+  // Record this save time so next merge knows what we've already seen
+  localStorage.setItem(MF_LAST_RESTORE_KEY, new Date().toISOString());
+}
+
 window.mfDriveSaveNow = async function() {
   // Auto-refresh token if expired
   if (window._driveToken && !mfTokenValid()) {
@@ -39381,8 +39609,8 @@ window.mfDriveSaveNow = async function() {
       _familyMeta: localStorage.getItem('mf_family_meta') || null,
       _storedPP:   localStorage.getItem('mf_enc_pp') || null,
     };
-    const b64 = await mfEncrypt(envelope, window._mfEncPassphrase);
-    await mfDriveWriteFile(b64);
+    // Use merge-then-save instead of plain write — handles two-phone offline conflict
+    await mfDriveMergeAndSave(envelope);
     const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     mfUpdateDriveStatusText('✅ Backed up at ' + ts, '#10B981');
     mfOnBackupSuccess(); // ← reliability layer
@@ -40033,6 +40261,7 @@ async function mfDriveReadFamilyFileById(folderId, fileName) {
 const MF_FS_COLLECTION    = 'mf_family';    // Firestore collection for family manifests
 const MF_FS_REKEY_COLLECTION = 'mf_family_rekey'; // {familyId}_{memberUid} → new key delivery
 const MF_FS_TXNS_COLLECTION  = 'mf_family_txns';  // {familyId}_{uid}_{month} → shared transactions
+const MF_FS_CMD_COLLECTION   = 'mf_family_cmds';  // owner→member commands (delete/edit/hide)
 
 function mfGetDb() {
   return window._fbDb || (window._fbDb = firebase.firestore());
@@ -41144,6 +41373,8 @@ setTimeout(() => {
     // Guard: data and viewMonth may not be defined if main app hasn't loaded yet
     const mk = (typeof viewMonth !== 'undefined') ? viewMonth : null;
     if (mk && typeof data !== 'undefined') {
+      // Process pending owner commands first — so Drive gets updated before sync
+      try { await mfProcessPendingCommands(); } catch(e) { console.warn('[MF Cmd]',e.message); }
       mfSyncFamilyTxns(mk);
       mfStartFamilyTxnsListener();
       await mfLoadFamilyTxns(mk);
