@@ -9106,38 +9106,8 @@ function openQuickAdd(type, subCat) {
 // ── Open Quick Add in EDIT mode pre-filled with existing transaction ───────
 function openEditTx(monthKey, type, idx) {
   const typeMap = {expense:'expenses',income:'income',investment:'investments',debt:'debts',given:'givenToOthers',additional:'additional'};
-  let tx = data[monthKey] && data[monthKey][typeMap[type]] && data[monthKey][typeMap[type]][idx];
-
-  // If not in own data, check family cache (owner editing member's transaction)
-  if (!tx) {
-    const familyM = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
-    const familyList = familyM[typeMap[type]] || [];
-    const familyTx = familyList[idx];
-    if (familyTx) {
-      const meta = typeof mfGetFamilyMeta === 'function' ? mfGetFamilyMeta() : null;
-      if (meta && meta.role === 'owner') {
-        // Pull family tx into local data so normal edit flow works
-        // Mark it so we know to push back to Firestore on save
-        if (!data[monthKey]) data[monthKey] = {};
-        if (!data[monthKey][typeMap[type]]) data[monthKey][typeMap[type]] = [];
-        const insertedIdx = data[monthKey][typeMap[type]].length;
-        data[monthKey][typeMap[type]].push({
-          ...familyTx,
-          _familyEdit: true,
-          _familyMemberUid: familyTx._memberUid,
-          _familyOrigIdx: idx
-        });
-        tx = data[monthKey][typeMap[type]][insertedIdx];
-        idx = insertedIdx;
-        showToast(`✏️ Editing ${familyTx._addedBy || 'member'}'s transaction`, 2000);
-      } else {
-        showToast('⚠️ Only the family owner can edit member transactions', 3000);
-        return;
-      }
-    } else {
-      return;
-    }
-  }
+  const tx = data[monthKey] && data[monthKey][typeMap[type]] && data[monthKey][typeMap[type]][idx];
+  if (!tx) return;
 
   // Set edit state
   qaEditMode = true;
@@ -9407,53 +9377,9 @@ function qaSave() {
     // Edit mode — replace existing entry
     const oldMonthKey = qaEditMonthKey;
     const oldType = typeMap[qaEditType];
-    const oldEntry = data[oldMonthKey][oldType][qaEditIdx];
-    const isFamilyEdit = oldEntry && oldEntry._familyEdit;
-    const familyMemberUid = oldEntry && oldEntry._familyMemberUid;
-
-    // Remove old entry
     data[oldMonthKey][oldType].splice(qaEditIdx, 1);
-    // Add updated entry (in new month if date changed)
     ensureMonth(monthKey);
-    // Strip family edit markers from saved entry
-    const { _familyEdit, _familyMemberUid, _familyOrigIdx, ...cleanEntry } = entry;
-    data[monthKey][typeMap[qaType]].push(cleanEntry);
-
-    // If this was a family transaction edit — push changes back to Firestore
-    if (isFamilyEdit && familyMemberUid) {
-      const meta = typeof mfGetFamilyMeta === 'function' ? mfGetFamilyMeta() : null;
-      if (meta) {
-        const docId = `${meta.familyId}_${familyMemberUid}_${monthKey}`;
-        mfGetDb().collection('mf_family_txns').doc(docId).get().then(doc => {
-          if (!doc.exists) return;
-          const d = doc.data();
-          // Replace the matching entry by category+amount fingerprint
-          const listKey = oldType;
-          const updList = (d[listKey] || []).map(t => {
-            const matches = String(t.category) === String(oldEntry.category) &&
-                           Math.abs(Number(t.amount)) === Math.abs(Number(oldEntry.amount));
-            return matches ? { ...cleanEntry, _addedBy: t._addedBy, _fromFamily: true, _memberUid: familyMemberUid } : t;
-          });
-          const update = {}; update[listKey] = updList;
-          doc.ref.update(update).then(() => {
-            // Refresh family cache
-            if (window._mfFamilyTxns) delete window._mfFamilyTxns[monthKey];
-            mfLoadFamilyTxns(monthKey).then(() => {
-              // Remove the temp local copy we added for editing
-              const localList = data[monthKey][typeMap[qaType]];
-              const tempIdx = localList.findIndex(t => t === cleanEntry);
-              if (tempIdx >= 0) localList.splice(tempIdx, 1);
-              renderHome(); renderTransactions && renderTransactions();
-            });
-            showToast('✅ Family transaction updated');
-          }).catch(e => console.warn('Family edit push failed:', e.message));
-        });
-        qaEditMode = false; qaEditMonthKey = null; qaEditType = null; qaEditIdx = null;
-        closeModal && closeModal('quick-add-modal');
-        return;
-      }
-    }
-
+    data[monthKey][typeMap[qaType]].push(entry);
     qaEditMode = false; qaEditMonthKey = null; qaEditType = null; qaEditIdx = null;
   } else {
     data[monthKey][typeMap[qaType]].push(entry);
@@ -11324,10 +11250,10 @@ function onTxSearch(q) {
           // Use swipe-wrap structure matching the main tx view
           return `<div class="swipe-wrap" style="margin-bottom:6px;">
             <div class="swipe-actions-right">
-              <button class="swipe-btn swipe-btn-edit" onclick="searchEditTx('${t._month}','${t._type}',${t._idx})">
+              ${!t._fromFamily ? `<button class="swipe-btn swipe-btn-edit" onclick="searchEditTx('${t._month}','${t._type}',${t._idx})">
                 <span class="swipe-btn-icon">✏️</span>Edit
-              </button>
-              <button class="swipe-btn swipe-btn-del" data-month="${t._month}" data-type="${t._type}" data-idx="${t._idx}" data-amt="${Math.abs(Number(t.amount||0))}" data-cat="${(t.category||'').replace(/"/g,'&quot;')}" onclick="searchDeleteTxByEl(this)">
+              </button>` : ''}
+              <button class="swipe-btn swipe-btn-del" data-month="${t._month}" data-type="${t._type}" data-idx="${t._idx}" data-amt="${Math.abs(Number(t.amount||0))}" data-cat="${(t.category||'').replace(/"/g,'&quot;')}" data-family="${t._fromFamily?'1':''}" onclick="searchDeleteTxByEl(this)">
                 <span class="swipe-btn-icon">🗑️</span>Delete
               </button>
             </div>
@@ -11377,7 +11303,12 @@ function searchDeleteTxByEl(btn) {
   const idx = parseInt(btn.dataset.idx);
   const amt = parseFloat(btn.dataset.amt);
   const cat = btn.dataset.cat;
-  searchDeleteTx(monthKey, type, idx, amt, cat);
+  const isFamily = btn.dataset.family === '1';
+  if (isFamily) {
+    familyDeleteTxByIdx(monthKey, type, idx);
+  } else {
+    searchDeleteTx(monthKey, type, idx, amt, cat);
+  }
 }
 
 function searchDeleteTx(monthKey, type, snapshotIdx, snapshotAmt, snapshotCat) {
@@ -11600,10 +11531,11 @@ function renderCalDayDetail(allTx) {
           </div>
           <!-- Right actions: Edit + Delete (swipe left) -->
           <div class="swipe-actions-right">
+            ${!t._fromFamily ? `
             <button class="swipe-btn swipe-btn-edit"
-              onclick="${t._fromFamily ? `openFamilyEditTx('${viewMonth}','${t._type}',${t._idx})` : `openEditTx('${viewMonth}','${t._type}',${t._idx})`}">
+              onclick="openEditTx('${viewMonth}','${t._type}',${t._idx})">
               <span class="swipe-btn-icon">✏️</span>Edit
-            </button>
+            </button>` : ''}
             <button class="swipe-btn swipe-btn-del"
               onclick="${t._fromFamily ? `familyDeleteTxByIdx('${viewMonth}','${t._type}',${t._idx})` : `calDeleteTx('${viewMonth}','${t._type}',${t._idx})`}">
               <span class="swipe-btn-icon">🗑️</span>Delete
@@ -11642,32 +11574,8 @@ function renderCalDayDetail(allTx) {
 
 // ── Family txn edit/delete directly from _mfFamilyTxns by index ──────────────
 function openFamilyEditTx(monthKey, type, idx) {
-  const typeMap = {expense:'expenses',income:'income',investment:'investments',additional:'additional'};
-  const listKey = typeMap[type];
-  const familyM = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
-  const ft = (familyM[listKey] || [])[idx];
-  if (!ft) { showToast('Transaction not found', 2000); return; }
-
-  const meta = typeof mfGetFamilyMeta === 'function' ? mfGetFamilyMeta() : null;
-  if (!meta || meta.role !== 'owner') {
-    showToast('⚠️ Only the family owner can edit member transactions', 3000);
-    return;
-  }
-
-  // Pull into local data temporarily for the edit UI
-  if (!data[monthKey]) data[monthKey] = {};
-  if (!data[monthKey][listKey]) data[monthKey][listKey] = [];
-  const insertedIdx = data[monthKey][listKey].length;
-  data[monthKey][listKey].push({
-    ...ft,
-    _familyEdit: true,
-    _familyMemberUid: ft._memberUid,
-    _familyOrigIdx: idx,
-    _familyListKey: listKey,
-    _familyMonth: monthKey
-  });
-  showToast(`✏️ Editing ${ft._addedBy || 'member'}'s transaction`, 2000);
-  openEditTx(monthKey, type, insertedIdx);
+  // Family transactions can only be edited by the member who added them on their device
+  showToast('⚠️ Ask the member to edit this on their own device', 3000);
 }
 
 function familyDeleteTxByIdx(monthKey, type, idx) {
