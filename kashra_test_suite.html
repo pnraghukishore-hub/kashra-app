@@ -396,11 +396,25 @@ function upStats(){
 }
 
 async function callAPI(system, user, maxTok=700){
-  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:maxTok,system,messages:[{role:'user',content:user}]})});
-  if(!r.ok) throw new Error('API '+r.status);
-  const d=await r.json();
-  return d.content?.[0]?.text||'';
+  const body = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: maxTok,
+    system,
+    messages: [{role:'user', content:user}]
+  });
+  const r = await fetch(API, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body
+  });
+  if (!r.ok) {
+    let errDetail = '';
+    try { const e = await r.json(); errDetail = JSON.stringify(e); } catch(e2) {}
+    console.error('[API 400] body size:', body.length, 'error:', errDetail);
+    throw new Error('API ' + r.status + ': ' + errDetail.slice(0,100));
+  }
+  const d = await r.json();
+  return d.content?.[0]?.text || '';
 }
 
 function setModuleTab(name,status){
