@@ -40436,13 +40436,16 @@ function mfStartFamilyTxnsListener() {
   if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
   _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
     .where('familyId', '==', meta.familyId)
-    .onSnapshot(snap => {
-      // Invalidate cache for changed months
+    .onSnapshot(async snap => {
+      // Collect changed months
+      const changedMonths = new Set();
       snap.docChanges().forEach(change => {
         const month = change.doc.data()?.month;
-        if (month) delete window._mfFamilyTxns[month];
+        if (month) { delete window._mfFamilyTxns[month]; changedMonths.add(month); }
       });
-      // Re-render current view
+      // Reload cache for changed months BEFORE re-rendering
+      await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
+      // Now re-render with fresh family data
       try { renderHome(); } catch(e) {}
       try { renderTransactions && renderTransactions(); } catch(e) {}
       console.log('[MF Family] Txns updated from Firestore');
