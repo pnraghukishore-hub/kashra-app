@@ -30965,13 +30965,34 @@ function showSyncStatus(msg, color='#10B981', duration=2500) {
 // When user returns to the tab, clear any "Saving..." bar that's been stuck > 15s.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+
+  // ── Stuck save recovery ──────────────────────────────────────────
   const bar = document.getElementById('sync-status-bar');
-  if (!bar || bar.style.display === 'none') return;
-  const stuckMs = Date.now() - (bar._shownAt || 0);
-  if (stuckMs > 15000 && bar.textContent.includes('Saving')) {
-    // Commit likely timed out while tab was backgrounded — retry now
-    showSyncStatus('⚠️ Sync interrupted — retrying…', '#F59E0B', 4000);
-    setTimeout(() => { if (window._fbUser) _doFirebaseSave(); }, 500);
+  if (bar && bar.style.display !== 'none') {
+    const stuckMs = Date.now() - (bar._shownAt || 0);
+    if (stuckMs > 15000 && bar.textContent.includes('Saving')) {
+      showSyncStatus('⚠️ Sync interrupted — retrying…', '#F59E0B', 4000);
+      setTimeout(() => { if (window._fbUser) _doFirebaseSave(); }, 500);
+    }
+  }
+
+  // ── Cross-device sync: pull from Drive when tab regains focus ────
+  // Silently restore if last restore was >5 minutes ago and user is signed in
+  // This ensures mobile saves are reflected on desktop without manual refresh
+  const lastRestore = localStorage.getItem('mf_last_restore');
+  const minsAgo = lastRestore ? (Date.now() - new Date(lastRestore).getTime()) / 60000 : 999;
+  if (minsAgo > 5 && window._fbUser && window._mfEncPassphrase && window._driveToken) {
+    console.log('[KashRA] Tab visible — pulling latest from Drive (last restore', Math.round(minsAgo), 'min ago)');
+    setTimeout(async () => {
+      try {
+        showSyncStatus('☁️ Checking for updates…', '#3B9EFF', 0);
+        await mfDriveRestorePrompt(true, true); // silent=true, noReload=true
+        showSyncStatus('✅ Up to date', '#10B981', 2000);
+      } catch(e) {
+        console.warn('[KashRA] Background pull failed:', e.message);
+        showSyncStatus('', '', 0); // clear status silently
+      }
+    }, 1500); // small delay so UI settles first
   }
 });
 
@@ -40242,6 +40263,116 @@ window.mfShareInviteWhatsApp = function() {
   );
   window.open(`https://wa.me/?text=${msg}`, '_blank');
 };
+
+// ── FAMILY PANEL (Settings → Family & Shared Finances) ─────────────
+window.renderFamilyPanel = function renderFamilyPanel() {
+  const el = document.getElementById('family-panel-content');
+  if (!el) return;
+
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  const isInFamily = !!(meta && keyBytes);
+
+  if (!isInFamily) {
+    // ── No family yet — show setup options ──────────────────────────
+    el.innerHTML = `
+      <div style="margin-bottom:12px;padding:12px 14px;background:#F5F0FF;border-radius:12px;font-size:0.78em;font-weight:600;color:#5B21B6;line-height:1.5;">
+        🔐 Family data is <strong>zero-knowledge</strong> — encrypted on your Drive. KashRA sees nothing.
+      </div>
+      <button onclick="mfFamilyCreate()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.9em;cursor:pointer;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px;">
+        👨‍👩‍👧‍👦 Create a Family Group
+      </button>
+      <button onclick="mfShowFamilyModal('joining')" style="width:100%;background:#F5F5F5;color:#1E2A6E;border:1.5px solid #E0E7FF;border-radius:12px;padding:12px;font-family:Nunito;font-weight:800;font-size:0.88em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        🔗 Join Existing Family
+      </button>`;
+    return;
+  }
+
+  const isOwner = meta.role === 'owner';
+  const familyId = meta.familyId || '—';
+  const ownerName = meta.ownerName || 'Family';
+
+  // ── In a family — show status + actions ─────────────────────────
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:10px 14px;background:#F0FFF4;border-radius:12px;border:1.5px solid #BBF7D0;">
+      <div>
+        <div style="font-size:0.78em;font-weight:900;color:#065F46;">
+          ${isOwner ? '👑 You are the Owner' : '👤 Member of ' + ownerName + "'s group"}
+        </div>
+        <div style="font-family:monospace;font-size:0.7em;color:#059669;margin-top:2px;">ID: ${familyId}</div>
+      </div>
+      <div style="font-size:1.5em;">👨‍👩‍👧‍👦</div>
+    </div>
+
+    ${isOwner ? `
+    <button onclick="mfFamilyShowInvite()" style="width:100%;background:linear-gradient(135deg,#059669,#10B981);color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:8px;">
+      📨 Invite a Family Member
+    </button>` : ''}
+
+    <div id="family-member-list" style="margin-bottom:10px;">
+      <div style="font-size:0.72em;font-weight:800;color:#6B7280;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Members</div>
+      <div id="family-member-rows" style="font-size:0.82em;color:#6B7280;font-style:italic;">Loading...</div>
+    </div>
+
+    <div style="border-top:1px solid #F0F0F0;padding-top:10px;display:flex;gap:8px;">
+      ${isOwner ? `
+      <button onclick="mfFamilyDisband()" style="flex:1;background:#FEF2F2;color:#DC2626;border:1.5px solid #FECACA;border-radius:10px;padding:9px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">
+        🗑 Disband Group
+      </button>` : `
+      <button onclick="mfFamilyLeave()" style="flex:1;background:#FEF2F2;color:#DC2626;border:1.5px solid #FECACA;border-radius:10px;padding:9px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">
+        👋 Leave Group
+      </button>`}
+      <button onclick="renderFamilyPanel()" style="flex:1;background:#F5F5F5;color:#374151;border:1.5px solid #E5E7EB;border-radius:10px;padding:9px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;">
+        🔄 Refresh
+      </button>
+    </div>`;
+
+  // Async: load member list from manifest
+  (async () => {
+    const rowsEl = document.getElementById('family-member-rows');
+    if (!rowsEl) return;
+    try {
+      const manifest = await mfReadManifest(meta.folderId, keyBytes);
+      const members  = (manifest.members || []).filter(m => m.status !== 'departed');
+      if (!members.length) {
+        rowsEl.innerHTML = '<div style="color:#9CA3AF;font-style:italic;">No members yet — invite someone!</div>';
+        return;
+      }
+      rowsEl.innerHTML = members.map(m => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F9FAFB;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:28px;height:28px;border-radius:50%;background:${m.role==='owner'?'#4F46E5':'#7C3AED'};display:flex;align-items:center;justify-content:center;font-size:0.75em;font-weight:800;color:white;">
+              ${(m.name||'?')[0].toUpperCase()}
+            </div>
+            <div>
+              <div style="font-weight:800;font-size:0.82em;color:#1E2A6E;">${m.name||'Unknown'} ${m.role==='owner'?'<span style="font-size:0.7em;color:#4F46E5;">👑</span>':''}</div>
+              <div style="font-size:0.65em;color:#9CA3AF;">${m.status==='active'?'✅ Active':m.status==='pending'?'⏳ Invited':'❌ '+m.status}</div>
+            </div>
+          </div>
+          ${isOwner && m.role !== 'owner' ? `
+          <button onclick="mfFamilyRemoveMember('${m.uid}','${(m.name||'Member').replace(/'/g,'')}')"
+            style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;border-radius:8px;padding:4px 10px;font-family:Nunito;font-weight:800;font-size:0.68em;cursor:pointer;">
+            Remove
+          </button>` : ''}
+        </div>`).join('');
+    } catch(e) {
+      if (rowsEl) rowsEl.innerHTML = '<div style="color:#F59E0B;font-size:0.8em;">Could not load member list — check Drive connection</div>';
+    }
+  })();
+};
+
+// Also wire accordion open to render the panel
+(function() {
+  const origToggle = window.toggleAccordion;
+  window.toggleAccordion = function(id) {
+    if (origToggle) origToggle(id);
+    if (id === 'acc-family') {
+      setTimeout(() => {
+        if (typeof renderFamilyPanel === 'function') renderFamilyPanel();
+      }, 50);
+    }
+  };
+})();
 
 // ── FAMILY DASHBOARD CARD (Home screen) ───────────────────────────
 window.renderFamilyDashCard = async function() {
