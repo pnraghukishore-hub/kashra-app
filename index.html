@@ -90,6 +90,26 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
 <head>
   <!-- ═══ PWA: MoneyFi ═══ -->
   <link rel="manifest" href="manifest.json">
+  <script>
+  // Inline manifest — avoids 404 since manifest.json not in repo
+  (function() {
+    const manifest = {
+      name: "KashRA",
+      short_name: "KashRA",
+      description: "Your zero-knowledge personal finance app",
+      start_url: "./",
+      display: "standalone",
+      background_color: "#1E2A6E",
+      theme_color: "#1E2A6E",
+      icons: [
+        { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💎</text></svg>", sizes: "any", type: "image/svg+xml" }
+      ]
+    };
+    const blob = new Blob([JSON.stringify(manifest)], {type: 'application/manifest+json'});
+    const url  = URL.createObjectURL(blob);
+    document.querySelector('link[rel="manifest"]').href = url;
+  })();
+  </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💎</text></svg>">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -23590,6 +23610,17 @@ function toggleNWSection(name) { trackFeature('nw_toggle_section');
 const MF_PRIVACY_KEY = 'mf_privacy_mode';
 let _nwHidden = localStorage.getItem(MF_PRIVACY_KEY) === '1';
 
+// ── Drive + Family constants — hoisted early so all functions can reference them ──
+const MF_FILE_NAME        = 'moneyfi_private.enc';
+const MF_SETUP_KEY        = 'mf_enc_setup';
+const MF_VERIFY_KEY       = 'mf_enc_verify';
+const MF_STORED_PP_KEY    = 'mf_enc_pp';
+// (declared early — see hoisted constants above)
+const MF_LAST_RESTORE_KEY = 'mf_last_restore';
+const MF_STORAGE_KEY      = 'financeData';
+const MF_FAMILY_KEY       = 'mf_family_key';
+const MF_FAMILY_META      = 'mf_family_meta';
+
 function toggleNWVisibility() {
   _nwHidden = !_nwHidden;
   localStorage.setItem(MF_PRIVACY_KEY, _nwHidden ? '1' : '0');
@@ -35490,7 +35521,13 @@ function scoreNWTrajectory(nw, profile) {
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js')
+        // Register inline service worker — avoids 404 for service-worker.js
+        const swCode = `self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));`;
+        const swBlob = new Blob([swCode], {type: 'application/javascript'});
+        const swUrl  = URL.createObjectURL(swBlob);
+        navigator.serviceWorker.register(swUrl)
           .then(reg => console.log('[MoneyFi] SW registered:', reg.scope))
           .catch(err => console.warn('[MoneyFi] SW failed:', err));
       });
@@ -38697,11 +38734,11 @@ document.addEventListener('touchend', e=>{
 // ── Constants ──────────────────────────────────────────────────────
 const MF_DRIVE_CLIENT_ID = '829444531718-qh5cvflnb7li78pmoof8qkp3u9mik1a0.apps.googleusercontent.com';
 const MF_DRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.appdata';
-const MF_FILE_NAME       = 'moneyfi_private.enc';
-const MF_SETUP_KEY       = 'mf_enc_setup';   // 'done' | 'skipped'
+// (declared early — see hoisted constants above)
+// (declared early — see hoisted constants above)
 const MF_SALT_KEY        = 'mf_enc_salt';
-const MF_VERIFY_KEY      = 'mf_enc_verify';  // encrypted verification token for passphrase check
-const MF_STORED_PP_KEY   = 'mf_enc_pp';      // passphrase stored encrypted with device secret (UID)
+// (declared early — see hoisted constants above)
+// (declared early — see hoisted constants above)
 const MF_LAST_PP_CHECK   = 'mf_pp_check_ts'; // timestamp of last passphrase reminder
 
 // ── Device-secret helpers ──────────────────────────────────────────
@@ -38750,10 +38787,10 @@ function mfShouldShowReminder() {
 }
 const MF_FILE_ID_KEY     = 'mf_drive_file_id';
 const MF_LAST_BACKUP_KEY  = 'mf_last_backup';
-const MF_LAST_RESTORE_KEY = 'mf_last_restore';   // timestamp of last successful Drive restore
+// (declared early — see hoisted constants above)
 const MF_DRIVE_STATUS_KEY = 'mf_drive_status';   // 'ok' | 'error' | 'offline' | 'disconnected'
 const MF_BACKUP_FAIL_KEY  = 'mf_backup_failures'; // count of consecutive backup failures
-const MF_STORAGE_KEY     = 'financeData';    // must match main app STORAGE_KEY
+// (declared early — see hoisted constants above)
 
 // In-memory only — never persisted
 window._mfEncPassphrase  = null;  // raw passphrase string (in-memory only)
@@ -39536,8 +39573,8 @@ if (document.readyState === 'loading') {
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────
-const MF_FAMILY_KEY       = 'mf_family_key';       // base64 family AES key (on member device)
-const MF_FAMILY_META      = 'mf_family_meta';      // {familyId, role, ownerName, folderPath}
+// (declared early — see hoisted constants above)
+// (declared early — see hoisted constants above)
 const MF_FAMILY_FOLDER    = 'moneyfi_family';      // Drive folder name
 const MF_MANIFEST_FILE    = 'family_manifest.enc'; // encrypted roster
 const MF_MAX_MEMBERS      = 6;
