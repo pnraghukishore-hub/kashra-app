@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KashRA — Family Flow Lab</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800&display=swap');
+
+  :root {
+    --bg: #09090f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --border2: #2a2a3e;
+    --text: #e2e2f0;
+    --dim: #6b6b8a;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --agent-a: #22c55e;
+    --agent-b: #f59e0b;
+    --agent-c: #a855f7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px; padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: linear-gradient(135deg, #1e40af, #7c3aed);
+    display: flex; align-items: center; justify-content: center; font-size: 18px;
+  }
+  .logo-text { font-family: var(--display); font-size: 1.2em; font-weight: 800; }
+  .logo-sub { font-size: 0.7em; color: var(--dim); margin-top: 2px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    font-size: 0.75em; color: var(--dim);
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .status-dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1s infinite; }
+  .status-dot.error   { background: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Stats row */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; text-align: center;
+  }
+  .stat-val { font-family: var(--display); font-size: 2em; font-weight: 800; margin-bottom: 4px; }
+  .stat-label { font-size: 0.65em; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; }
+
+  /* Main grid */
+  .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+  /* Agent cards */
+  .agent-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden;
+  }
+  .agent-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .agent-badge {
+    padding: 3px 10px; border-radius: 20px; font-size: 0.65em; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .badge-a { background: rgba(34,197,94,0.15); color: var(--agent-a); border: 1px solid rgba(34,197,94,0.3); }
+  .badge-b { background: rgba(245,158,11,0.15); color: var(--agent-b); border: 1px solid rgba(245,158,11,0.3); }
+  .badge-c { background: rgba(168,85,247,0.15); color: var(--agent-c); border: 1px solid rgba(168,85,247,0.3); }
+  .agent-name { font-weight: 700; font-size: 0.9em; }
+  .agent-role { font-size: 0.72em; color: var(--dim); margin-top: 1px; }
+  .agent-status { margin-left: auto; font-size: 0.72em; color: var(--dim); font-style: italic; }
+  .agent-body { padding: 14px 16px; min-height: 80px; }
+
+  /* Controls */
+  .controls {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px; margin-bottom: 16px;
+    display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+  }
+  .control-group { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; }
+  .control-label { font-size: 0.65em; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  select, button {
+    background: var(--bg); border: 1px solid var(--border2); border-radius: 8px;
+    color: var(--text); font-family: var(--mono); font-size: 0.82em;
+    padding: 9px 12px; cursor: pointer; outline: none;
+  }
+  select:focus, select:hover { border-color: var(--blue); }
+  .run-btn {
+    background: linear-gradient(135deg, #1d4ed8, #7c3aed);
+    border: none; border-radius: 10px; color: white;
+    font-family: var(--display); font-weight: 800; font-size: 0.88em;
+    padding: 10px 24px; cursor: pointer; white-space: nowrap;
+    transition: opacity 0.2s;
+  }
+  .run-btn:hover { opacity: 0.9; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Session log */
+  .log-section {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden;
+  }
+  .log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .log-title { font-family: var(--display); font-size: 0.85em; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .log-count { font-size: 0.72em; color: var(--dim); }
+  .log-body { padding: 14px; max-height: 500px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-track { background: transparent; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* Log entries */
+  .log-entry { border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  .log-entry-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; font-size: 0.72em; font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .entry-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .entry-scenario { color: var(--blue); }
+  .log-entry-body { padding: 10px 12px; }
+
+  .step { margin-bottom: 10px; }
+  .step-label { font-size: 0.65em; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .step-content { font-size: 0.78em; line-height: 1.6; color: var(--text); }
+
+  .verdict-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 10px;
+    padding: 8px 10px; border-radius: 8px;
+  }
+  .verdict-pass { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); }
+  .verdict-fail { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
+  .verdict-warn { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); }
+  .verdict-icon { font-size: 0.9em; }
+  .verdict-label { font-weight: 700; font-size: 0.72em; }
+  .verdict-score { margin-left: auto; font-size: 0.7em; color: var(--dim); }
+
+  .bugs-list { margin-top: 8px; }
+  .bug-item {
+    padding: 6px 10px; margin-bottom: 4px; border-radius: 6px;
+    background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.15);
+    font-size: 0.73em; line-height: 1.5; color: #fca5a5;
+  }
+  .warn-item {
+    padding: 6px 10px; margin-bottom: 4px; border-radius: 6px;
+    background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.15);
+    font-size: 0.73em; line-height: 1.5; color: #fcd34d;
+  }
+  .suggestion-item {
+    margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(168,85,247,0.06); border: 1px solid rgba(168,85,247,0.2);
+  }
+  .suggestion-label { font-size: 0.62em; color: var(--agent-c); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .suggestion-text { font-size: 0.73em; color: var(--text); line-height: 1.5; }
+
+  /* Bugs panel */
+  .bugs-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; margin-top: 16px; overflow: hidden;
+  }
+  .bugs-panel-header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-family: var(--display); font-size: 0.85em; font-weight: 800;
+    color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .bugs-panel-body { padding: 14px; }
+  .bug-report {
+    margin-bottom: 10px; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--border2); background: var(--bg);
+  }
+  .bug-title { font-weight: 700; font-size: 0.82em; margin-bottom: 4px; }
+  .bug-desc { font-size: 0.73em; color: var(--dim); line-height: 1.5; }
+  .severity-high { border-left: 3px solid var(--red); }
+  .severity-med  { border-left: 3px solid var(--amber); }
+  .severity-low  { border-left: 3px solid var(--blue); }
+  .copy-btn {
+    margin-top: 10px; background: var(--border); border: none;
+    border-radius: 6px; color: var(--text); font-family: var(--mono);
+    font-size: 0.72em; padding: 6px 12px; cursor: pointer;
+  }
+  .copy-btn:hover { background: var(--border2); }
+  .empty-state { text-align: center; padding: 30px; color: var(--dim); font-size: 0.8em; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">👨‍👩‍👧‍👦</div>
+      <div>
+        <div class="logo-text">KashRA — Family Flow Lab</div>
+        <div class="logo-sub">adversarial simulation · find bugs before users do</div>
+      </div>
+    </div>
+    <div class="status-pill">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label">ready</span>
+    </div>
+  </header>
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-val" id="stat-total">0</div>
+      <div class="stat-label">Scenarios Run</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--green)" id="stat-pass">0</div>
+      <div class="stat-label">Passed ✓</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--red)" id="stat-fail">0</div>
+      <div class="stat-label">Bugs Found ✗</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--amber)" id="stat-warn">0</div>
+      <div class="stat-label">Warnings ⚠</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div class="agent-card">
+      <div class="agent-header">
+        <span class="agent-badge badge-a">AGENT A</span>
+        <div>
+          <div class="agent-name">Flow Simulator</div>
+          <div class="agent-role">Simulates family user actions step-by-step</div>
+        </div>
+        <div class="agent-status" id="agent-a-status">Idle</div>
+      </div>
+      <div class="agent-body">
+        <div style="font-size:0.75em;color:var(--dim);line-height:1.6;">
+          Generates realistic multi-step family scenarios:<br>
+          create family → invite → join → add transactions → sync → view → delete
+        </div>
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-header">
+        <span class="agent-badge badge-b">AGENT B</span>
+        <div>
+          <div class="agent-name">Code Critic</div>
+          <div class="agent-role">Analyses code paths for bugs in each flow</div>
+        </div>
+        <div class="agent-status" id="agent-b-status">Idle</div>
+      </div>
+      <div class="agent-body">
+        <div style="font-size:0.75em;color:var(--dim);line-height:1.6;">
+          Reads actual KashRA function code and identifies:<br>
+          race conditions · index mismatches · uid bugs · data loss risks
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="control-group">
+      <div class="control-label">Test Scenario</div>
+      <select id="scenario-select">
+        <option value="owner_add_delete">Owner adds + deletes own transaction</option>
+        <option value="member_add_sync">Member adds transaction → owner sees it</option>
+        <option value="member_join_history">New member joins → sees past transactions</option>
+        <option value="owner_delete_member">Owner deletes member's transaction</option>
+        <option value="rejoin_duplicates">Member rejoins → duplicate detection</option>
+        <option value="drive_token_expiry">Drive token expires mid-session</option>
+        <option value="cross_device_sync">Mobile saves → desktop sees it</option>
+        <option value="budget_family_spend">Family spend appears in budget view</option>
+        <option value="author_chips">Author chips filter correctly</option>
+        <option value="full_gauntlet">Full Gauntlet — all scenarios</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <div class="control-label">Family Setup</div>
+      <select id="profile-select">
+        <option value="owner_only">Owner only (Kishore) — solo</option>
+        <option value="owner_member">Owner + 1 Member (Kishore + Skanda)</option>
+        <option value="full_family">Full Family (Kishore + Skanda + Swathi)</option>
+        <option value="rejoined_member">Rejoined Member (Skanda joined 3x)</option>
+        <option value="new_joiner">Brand new member joining fresh</option>
+      </select>
+    </div>
+    <button class="run-btn" id="run-btn" onclick="runTest()">▶ Run Test</button>
+  </div>
+
+  <div class="log-section">
+    <div class="log-header">
+      <div class="log-title">Session Log</div>
+      <div class="log-count" id="log-count">0 exchanges</div>
+    </div>
+    <div class="log-body" id="log-body">
+      <div class="empty-state">Run a scenario to begin simulation</div>
+    </div>
+  </div>
+
+  <div class="bugs-panel">
+    <div class="bugs-panel-header">🐛 Bug Report — Generated from Simulation</div>
+    <div class="bugs-panel-body" id="bugs-body">
+      <div class="empty-state">Bugs found during testing will appear here with fix suggestions</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API_URL = 'https://fragrant-sound-019d.pnraghukishore.workers.dev';
+
+// ── KashRA Family Function Code (extracted for Agent B) ───────────────────
+const KASHRA_CODE = `
+// mfLoadFamilyTxns — loads other members' txns from Firestore into cache
+async function mfLoadFamilyTxns(monthKey) {
+  const meta = mfGetFamilyMeta(); // {familyId, role, myUid, myName, ownerName}
+  if (!meta) return;
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  if (!myUid) return; // bail if uid unknown
+
+  const lockKey = '_mfLoadLock_' + monthKey;
+  if (window[lockKey]) return; // prevent concurrent loads
+  window[lockKey] = true;
+
+  const snap = await firebase.firestore().collection('mf_family_txns')
+    .where('familyId', '==', meta.familyId)
+    .where('month', '==', monthKey).get();
+
+  // Deduplicate by uid — keep doc with most transactions (handles rejoin case)
+  const docsByUid = {};
+  snap.docs.forEach(doc => {
+    const d = doc.data();
+    if (!d.uid || d.uid === myUid) return; // skip own
+    const existing = docsByUid[d.uid];
+    const count = (d.expenses||[]).length + (d.income||[]).length;
+    if (!existing || count >= existing.count) docsByUid[d.uid] = { ...d, count };
+  });
+
+  const merged = { expenses:[], income:[], investments:[], additional:[] };
+  Object.values(docsByUid).forEach(d => {
+    ['expenses','income','investments','additional'].forEach(type => {
+      (d[type]||[]).forEach(t => {
+        merged[type].push({...t, _addedBy: t._addedBy||d.memberName, _fromFamily:true, _memberUid:d.uid});
+      });
+    });
+  });
+  window._mfFamilyTxns[monthKey] = merged;
+}
+
+// mfSyncFamilyTxns — pushes OWN txns to Firestore
+async function mfSyncFamilyTxns(monthKey) {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  const myUid = meta.myUid || (meta.role==='owner' ? meta.familyId+'_owner' : null);
+  const docId = meta.familyId+'_'+myUid+'_'+monthKey;
+  await firebase.firestore().collection('mf_family_txns').doc(docId).set({
+    familyId: meta.familyId, uid: myUid,
+    memberName: meta.role==='owner' ? meta.ownerName : meta.myName,
+    month: monthKey, ...data[monthKey],
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+// mfStartFamilyTxnsListener — real-time Firestore listener
+function mfStartFamilyTxnsListener() {
+  let initialized = false;
+  _mfTxnsUnsubscribe = firebase.firestore().collection('mf_family_txns')
+    .where('familyId', '==', meta.familyId)
+    .onSnapshot(async snap => {
+      if (!initialized) { initialized = true; return; } // skip initial delivery
+      const changed = new Set();
+      snap.docChanges().forEach(c => { if (c.doc.data()?.month) changed.add(c.doc.data().month); });
+      await Promise.all([...changed].map(m => mfLoadFamilyTxns(m)));
+      renderHome(); renderTransactions?.();
+    });
+  mfLoadFamilyTxns(viewMonth); // explicit initial load
+}
+
+// familyDeleteByKey — delete by fingerprint (uid|cat|amount|date)
+function familyDeleteByKey(monthKey, type, fkey) {
+  const listKey = {expense:'expenses',income:'income',investment:'investments',additional:'additional'}[type];
+  const list = (window._mfFamilyTxns?.[monthKey]?.[listKey]) || [];
+  const idx = list.findIndex(t => t._memberUid+'|'+t.category+'|'+t.amount+'|'+t.date === fkey);
+  if (idx === -1) { showToast('Transaction not found'); return; }
+  familyDeleteTxByIdx(monthKey, type, idx);
+}
+
+// familyDeleteTxByIdx — remove from cache + Firestore
+function familyDeleteTxByIdx(monthKey, type, idx) {
+  const listKey = {expense:'expenses',income:'income',investment:'investments',additional:'additional'}[type];
+  const familyM = window._mfFamilyTxns?.[monthKey] || {};
+  const ft = (familyM[listKey]||[])[idx];
+  if (!ft) { showToast('Transaction not found'); return; }
+  const meta = mfGetFamilyMeta();
+  if (meta?.role === 'owner') {
+    familyM[listKey].splice(idx, 1);
+    firebase.firestore().collection('mf_family_txns')
+      .doc(meta.familyId+'_'+ft._memberUid+'_'+monthKey).get()
+      .then(doc => {
+        if (!doc.exists) return;
+        const updList = doc.data()[listKey].filter(t =>
+          !(t.category===ft.category && t.amount===ft.amount && t.date===ft.date));
+        doc.ref.update({[listKey]: updList});
+      });
+    renderHome(); renderTransactions?.();
+  } else { showToast('Only owner can delete member transactions'); }
+}
+
+// _addedBy tagging — uses family join-name, not Google display name
+const _addedBy = meta?.role==='owner' ? meta.ownerName : (meta?.myName || user.displayName);
+`;
+
+// ── Scenarios ─────────────────────────────────────────────────────────────
+const SCENARIOS = {
+  owner_add_delete: [
+    "Owner (Kishore) adds a FastFood expense $29 on Mar 1. The transaction is saved to localStorage and synced to Firestore via mfTxnsAutoSync after 5 seconds.",
+    "Owner swipes left on the transaction in List view and taps Delete. The confirm dialog shows 'Delete FastFood · $29?' and owner taps OK.",
+    "Verify the transaction is removed from data[viewMonth].expenses, Drive backup triggers, and the UI re-renders with updated totals."
+  ],
+  member_add_sync: [
+    "Member Skanda (myUid: 'mbr_1234', myName: 'Skanda') opens the app on his phone. mfStartFamilyTxnsListener attaches to Firestore collection mf_family_txns.",
+    "Skanda adds Breakfast expense $36 on Mar 21. _addedBy is set from meta.myName = 'Skanda'. mfTxnsAutoSync fires after 5s, pushing to Firestore doc 'MF-VL5RC3XT_mbr_1234_2026-03'.",
+    "Kishore's device receives the onSnapshot change. _listenerInitialized is true so it processes. mfLoadFamilyTxns('2026-03') runs. Skanda's doc has uid='mbr_1234' which !== myUid='MF-VL5RC3XT_owner', so it loads. Breakfast $36 appears in Kishore's list view with '👤 Skanda' tag."
+  ],
+  member_join_history: [
+    "New member Swathi joins using invite code. mfFamilyJoin runs: saves meta with myUid='mbr_9999', myName='Swathi'. mfStartFamilyTxnsListener starts.",
+    "Post-join: code loads 6 months of family history. mfLoadFamilyTxns runs for 2026-03, 2026-02, 2026-01, 2025-12, 2025-11, 2025-10.",
+    "Swathi's own pre-join transactions are in her local data[] but NOT yet synced to Firestore. Does Kishore see Swathi's pre-join data? Does Swathi see Kishore's full history?"
+  ],
+  owner_delete_member: [
+    "Kishore sees Skanda's Breakfast $36 in list view. The row has _fromFamily:true, _fkey='mbr_1234|Breakfast|36|2026-03-21', _memberUid='mbr_1234'.",
+    "Kishore swipes left. Only Delete button shows (Edit hidden for family txns). Kishore taps Delete. listFamilyOrOwnDelete fires → familyDeleteByKey('2026-03','expense','mbr_1234|Breakfast|36|2026-03-21').",
+    "familyDeleteByKey finds idx=0 in familyM.expenses. Calls familyDeleteTxByIdx. Splices from cache. Calls firebase.firestore() to get doc 'MF-VL5RC3XT_mbr_1234_2026-03' and removes the entry. UI re-renders."
+  ],
+  rejoin_duplicates: [
+    "Skanda previously created his own family (MF-LTWNQECQ) then joined Kishore's (MF-VL5RC3XT) twice. Firestore has 3 docs for uid patterns: 'mbr_1111', 'mbr_2222', 'mbr_3333' — all with same Breakfast $36.",
+    "mfLoadFamilyTxns runs. snap returns 3 docs. docsByUid dedup logic: counts expenses per uid. All 3 have same uid? No — they have different uids but same Google auth. Does dedup work when uids differ?",
+    "After dedup, how many copies of Breakfast $36 appear in _mfFamilyTxns[2026-03].expenses?"
+  ],
+  drive_token_expiry: [
+    "Kishore has had the app open for 65 minutes. Drive token expired at 60 min. mfScheduleTokenRefresh was supposed to fire at 55 min for silent refresh.",
+    "Kishore adds a new transaction. save() fires → mfDriveAutoSave() → mfDriveSaveNow(). mfDriveSaveNow checks: window._driveToken exists but Date.now() > window._driveTokenExpiry. Calls mfSilentTokenRefresh(), waits 2000ms.",
+    "Does the backup succeed? What happens to the transaction data if the silent refresh fails (user session expired)? Is there a fallback?"
+  ],
+  cross_device_sync: [
+    "Kishore adds a transaction on iPhone (Mobile PWA). save() → mfDriveAutoSave (5s debounce) → Drive backup completes. localStorage updated.",
+    "Kishore opens the app on MacBook Chrome. visibilitychange fires (tab was already open). Last restore was 45 min ago (< 5 min threshold? Or > 5 min?). Does Drive pull trigger?",
+    "Drive pull succeeds. mfDriveRestorePrompt(true, true) runs silently. New transaction appears. What if MacBook had newer local data? Is there a merge conflict?"
+  ],
+  budget_family_spend: [
+    "getBudgetActual(fastFoodGoal, '2026-03') runs. It reads data['2026-03'].expenses (Kishore's: $118 FastFood) AND fm.expenses from _mfFamilyTxns['2026-03'] (Skanda: Breakfast $36 categorised as 'Breakfast' not 'FastFood').",
+    "FastFood budget goal has linkedCats: ['fastfood', 'fast food']. Skanda's transaction has category='Breakfast'. Does it match? Does Skanda's $36 appear in the FastFood budget bar?",
+    "What about the budget category detail screen (_renderBudgetDetail)? Does it also include Skanda's Breakfast transaction in the FastFood transaction list?"
+  ],
+  author_chips: [
+    "renderAuthorChips runs. It collects _addedBy from data[viewMonth] (own txns: 'Kishore PNR') and from _mfFamilyTxns[viewMonth] (Skanda: 'Skanda', Swathi: 'swathi kishore').",
+    "Family meta exists (mfGetFamilyMeta() returns non-null). isInFamily = true. authors array = ['Kishore PNR', 'Skanda', 'swathi kishore']. Chips render: All | Kishore PNR | Skanda | swathi kishore.",
+    "User taps 'Skanda' chip. _authorFilter = 'Skanda'. authorOk filter: t._addedBy.toLowerCase() === 'skanda'. Skanda's old docs had _addedBy='Jr Kanaya'. Do old transactions pass the filter?"
+  ],
+  full_gauntlet: [
+    "GAUNTLET ROUND 1: Member sync — Skanda adds Groceries $40 on Mar 21. Firestore doc updated. Kishore's onSnapshot fires. mfLoadFamilyTxns deduplicates. Groceries $40 appears in Kishore's list view, budget bar, and Home spending card.",
+    "GAUNTLET ROUND 2: Owner delete — Kishore deletes Skanda's Groceries $40 via familyDeleteByKey. firebase.firestore() call removes from Firestore. Skanda's onSnapshot fires on his device. Does Skanda's local data update? Does the transaction reappear after Skanda re-syncs?",
+    "GAUNTLET ROUND 3: Edge case — Swathi joins, immediately adds Rent $1200. _addedBy = 'Swathi' (from meta.myName). mfSyncFamilyTxns pushes. Kishore loads. Does $1200 appear in Kishore's Mortgage/Rent budget? What if Swathi's category is 'Rent' but budget goal key is 'mortgage'?"
+  ]
+};
+
+// ── Family Profiles ────────────────────────────────────────────────────────
+const PROFILES = {
+  owner_only: `FAMILY STATE: No family group created. mfGetFamilyMeta() returns null. window._mfFamilyTxns = {}. All family sync functions exit immediately on !meta check.`,
+
+  owner_member: `FAMILY STATE:
+Owner: Kishore PNR | myUid: MF-VL5RC3XT_owner | familyId: MF-VL5RC3XT
+Member: Skanda | myUid: mbr_1711234567890 | myName: 'Skanda' | Google displayName: 'Sri Skanda'
+Firestore docs for 2026-03:
+  - MF-VL5RC3XT_MF-VL5RC3XT_owner_2026-03: 46 expenses, 8 income (Kishore's data)
+  - MF-VL5RC3XT_mbr_1711234567890_2026-03: 1 expense (Breakfast $36, _addedBy:'Skanda')
+window._mfFamilyTxns['2026-03'] = { expenses: [{...Breakfast $36, _memberUid:'mbr_1711234567890', _addedBy:'Skanda'}], income:[], investments:[], additional:[] }`,
+
+  full_family: `FAMILY STATE:
+Owner: Kishore PNR | myUid: MF-VL5RC3XT_owner | familyId: MF-VL5RC3XT
+Member 1: Skanda | myUid: mbr_1711234567890 | myName: 'Skanda'
+Member 2: Swathi | myUid: mbr_1711299999999 | myName: 'Swathi'
+Firestore docs 2026-03:
+  - Kishore: 46 expenses, 8 income
+  - Skanda: Breakfast $36 (Mar 21), _addedBy:'Skanda'
+  - Swathi: Breakfast $11 (Mar 21), _addedBy:'swathi kishore' (Google name, old doc)
+window._mfFamilyTxns['2026-03'].expenses has 2 entries from family members`,
+
+  rejoined_member: `FAMILY STATE:
+Owner: Kishore PNR | myUid: MF-VL5RC3XT_owner
+Member Skanda joined 3 times — 3 different uids in Firestore:
+  - mbr_OLD1: Breakfast $36 (from first join)
+  - mbr_OLD2: Breakfast $36 (from second join — accidentally created own family first)
+  - mbr_1711234567890: Breakfast $36 (current active uid)
+All 3 docs have familyId: MF-VL5RC3XT, month: 2026-03, same expense data
+Dedup logic: docsByUid groups by uid — but all 3 have DIFFERENT uids, so NO dedup happens
+window._mfFamilyTxns['2026-03'].expenses has 3 copies of Breakfast $36`,
+
+  new_joiner: `FAMILY STATE:
+Owner: Kishore PNR with 8 months of history in Firestore
+New member: Swathi — just completed mfFamilyJoin, received myUid: mbr_NEW_1234
+Join flow just: saved meta, started listener, loaded 6 months of history
+Swathi's own data: 2 months of local transactions NOT yet synced to Firestore
+window._mfFamilyTxns on Swathi's device: populated with Kishore+Skanda's last 6 months
+Firestore: Swathi's own docs don't exist yet until mfSyncFamilyTxns fires`
+};
+
+// ── Agent B System Prompt ──────────────────────────────────────────────────
+const AGENT_B_SYSTEM = `You are a senior software QA engineer specialising in real-time sync bugs, race conditions, and data integrity issues in PWA family finance apps.
+
+You are given:
+1. A family scenario described step-by-step
+2. The actual KashRA source code for relevant functions
+3. The family state (Firestore docs, localStorage, in-memory cache)
+
+Your job: analyse whether the described flow will work correctly, and identify any bugs, edge cases, or data integrity risks.
+
+FOCUS AREAS:
+- Index mismatches (array index changes after sort/filter)
+- uid consistency (same user, different uid across docs)
+- Race conditions (concurrent async operations)
+- Cache invalidation (stale _mfFamilyTxns after delete/edit)
+- Name matching bugs (_addedBy vs chip filter names)
+- Budget category matching (member uses 'Breakfast', budget key is 'fastfood')
+- Missing re-render triggers
+- Data loss risks (delete from cache but Firestore update fails)
+
+RESPONSE FORMAT (JSON only, no markdown):
+{
+  "verdict": "pass" | "fail" | "warn",
+  "score": 0-100,
+  "bugs": ["specific bug description with line/function reference"],
+  "warnings": ["potential issue that may not always manifest"],
+  "fix": "specific code fix recommendation"
+}`;
+
+// ── State ──────────────────────────────────────────────────────────────────
+let stats = { total: 0, pass: 0, fail: 0, warn: 0 };
+let allBugs = [];
+let isRunning = false;
+
+function setStatus(text, running = false) {
+  document.getElementById('status-label').textContent = text;
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot' + (running ? ' running' : '');
+}
+
+function updateStats() {
+  document.getElementById('stat-total').textContent = stats.total;
+  document.getElementById('stat-pass').textContent  = stats.pass;
+  document.getElementById('stat-fail').textContent  = stats.fail;
+  document.getElementById('stat-warn').textContent  = stats.warn;
+  document.getElementById('log-count').textContent  = `${stats.total} exchange${stats.total!==1?'s':''}`;
+}
+
+async function callClaude(system, user, maxTokens = 800) {
+  const resp = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: user }]
+    })
+  });
+  if (!resp.ok) throw new Error('API error ' + resp.status);
+  const d = await resp.json();
+  return d.content?.[0]?.text || '';
+}
+
+async function runTest() {
+  if (isRunning) return;
+  const scenarioKey = document.getElementById('scenario-select').value;
+  const profileKey  = document.getElementById('profile-select').value;
+  const steps = scenarioKey === 'full_gauntlet'
+    ? Object.values(SCENARIOS).flat()
+    : SCENARIOS[scenarioKey];
+  const profile = PROFILES[profileKey];
+
+  isRunning = true;
+  document.getElementById('run-btn').disabled = true;
+  setStatus('running simulation…', true);
+
+  const logBody = document.getElementById('log-body');
+  if (stats.total === 0) logBody.innerHTML = '';
+
+  const isGauntlet = scenarioKey === 'full_gauntlet';
+  const scenarioNames = isGauntlet ? Object.keys(SCENARIOS).filter(k=>k!=='full_gauntlet') : [scenarioKey];
+
+  let stepIdx = 0;
+  for (const step of steps) {
+    stats.total++;
+    updateStats();
+
+    const currentScenario = isGauntlet
+      ? scenarioNames[Math.floor(stepIdx / 3)] || scenarioKey
+      : scenarioKey;
+
+    document.getElementById('agent-a-status').textContent = `Step ${stepIdx + 1} — ${currentScenario.replace(/_/g,' ')}`;
+
+    // Agent B analyses the step
+    document.getElementById('agent-b-status').textContent = `Analysing step ${stepIdx + 1}…`;
+
+    const prompt = `FAMILY STATE:\n${profile}\n\nFUNCTION CODE:\n${KASHRA_CODE}\n\nSCENARIO STEP:\n${step}\n\nAnalyse this specific step for bugs, race conditions, or data integrity issues. Return JSON only.`;
+
+    let verdict;
+    try {
+      const raw = await callClaude(AGENT_B_SYSTEM, prompt, 600);
+      const clean = raw.replace(/```json|```/g, '').trim();
+      verdict = JSON.parse(clean);
+    } catch(e) {
+      verdict = { verdict: 'warn', score: 50, bugs: [], warnings: ['Could not parse critique: ' + e.message], fix: '' };
+    }
+
+    // Update stats
+    if (verdict.verdict === 'pass') stats.pass++;
+    else if (verdict.verdict === 'fail') { stats.fail++; }
+    else stats.warn++;
+    updateStats();
+
+    // Collect bugs
+    if (verdict.bugs?.length) {
+      verdict.bugs.forEach(b => allBugs.push({ scenario: currentScenario, step: stepIdx+1, text: b, severity: 'high', fix: verdict.fix }));
+    }
+
+    // Render log entry
+    const verdictIcon = verdict.verdict === 'pass' ? '✅' : verdict.verdict === 'fail' ? '❌' : '⚠️';
+    const verdictClass = `verdict-${verdict.verdict}`;
+    const dotColor = verdict.verdict === 'pass' ? 'var(--green)' : verdict.verdict === 'fail' ? 'var(--red)' : 'var(--amber)';
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `
+      <div class="log-entry-header">
+        <div class="entry-dot" style="background:${dotColor};"></div>
+        <span class="entry-scenario">Step ${stepIdx+1}</span>
+        <span style="color:var(--dim);">·</span>
+        <span style="color:var(--dim);font-style:italic;">${currentScenario.replace(/_/g,' ')}</span>
+      </div>
+      <div class="log-entry-body">
+        <div class="step">
+          <div class="step-label">Agent A — Scenario</div>
+          <div class="step-content">${step.substring(0, 200)}${step.length > 200 ? '…' : ''}</div>
+        </div>
+        <div class="verdict-row ${verdictClass}">
+          <span class="verdict-icon">${verdictIcon}</span>
+          <span class="verdict-label">${verdict.verdict.toUpperCase()}</span>
+          <span class="verdict-score">score: ${verdict.score}/100</span>
+        </div>
+        ${verdict.bugs?.length ? `
+          <div class="bugs-list" style="margin-top:8px;">
+            <div style="font-size:0.62em;color:var(--red);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Bugs Found</div>
+            ${verdict.bugs.map(b => `<div class="bug-item">${b}</div>`).join('')}
+          </div>` : ''}
+        ${verdict.warnings?.length ? `
+          <div class="bugs-list" style="margin-top:6px;">
+            <div style="font-size:0.62em;color:var(--amber);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Warnings</div>
+            ${verdict.warnings.map(w => `<div class="warn-item">${w}</div>`).join('')}
+          </div>` : ''}
+        ${verdict.fix ? `
+          <div class="suggestion-item">
+            <div class="suggestion-label">Fix Suggestion</div>
+            <div class="suggestion-text">${verdict.fix}</div>
+          </div>` : ''}
+      </div>`;
+
+    logBody.appendChild(entry);
+    logBody.scrollTop = logBody.scrollHeight;
+    document.getElementById('agent-b-status').textContent = `Step ${stepIdx+1}: ${verdictIcon} (${verdict.score}/100)`;
+
+    stepIdx++;
+    await new Promise(r => setTimeout(r, 600));
+  }
+
+  // Render bug report
+  renderBugReport();
+  setStatus('complete', false);
+  document.getElementById('run-btn').disabled = false;
+  isRunning = false;
+}
+
+function renderBugReport() {
+  const body = document.getElementById('bugs-body');
+  if (!allBugs.length) {
+    body.innerHTML = '<div class="empty-state">✓ No bugs found in this simulation run</div>';
+    return;
+  }
+
+  body.innerHTML = allBugs.map((b, i) => `
+    <div class="bug-report severity-${b.severity}">
+      <div class="bug-title">🐛 Bug ${i+1} — ${b.scenario.replace(/_/g,' ')} (Step ${b.step})</div>
+      <div class="bug-desc">${b.text}</div>
+      ${b.fix ? `<div style="margin-top:6px;font-size:0.72em;color:var(--purple);">💡 ${b.fix}</div>` : ''}
+    </div>`).join('') +
+    `<button class="copy-btn" onclick="copyBugs()">📋 Copy all bugs to clipboard</button>`;
+}
+
+function copyBugs() {
+  const text = allBugs.map((b, i) =>
+    `BUG ${i+1} [${b.scenario} / Step ${b.step}]\n${b.text}\nFIX: ${b.fix||'—'}`
+  ).join('\n\n---\n\n');
+  navigator.clipboard?.writeText(text).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy all bugs', 2000); }
+  });
+}
+</script>
+</body>
+</html>
