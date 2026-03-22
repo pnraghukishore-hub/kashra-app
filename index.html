@@ -39924,11 +39924,6 @@ window.mfFamilyShowInvite = async function() {
 
 // ── JOIN FAMILY (Member flow) ──────────────────────────────────────
 window.mfFamilyJoin = async function() {
-  // Member needs Drive connected to access owner's shared folder
-  if (!window._driveToken) {
-    showToast('⚠️ Connect Google Drive first: Settings → Zero-Knowledge Backup → Connect', 4000);
-    return; // Keep modal open so user can come back
-  }
   const input = document.getElementById('mf-family-join-input');
   const raw   = (input?.value || '').trim();
   if (!raw) { showToast('⚠️ Paste the invite code first', 2000); return; }
