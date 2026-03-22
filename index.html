@@ -40432,6 +40432,18 @@ async function mfLoadFamilyTxns(monthKey) {
   const meta = mfGetFamilyMeta();
   if (!meta) return;
   const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+
+  // Guard: if we still don't know our own uid, bail — better to show nothing than doubles
+  if (!myUid) {
+    console.warn('[MF Family] Cannot load txns — myUid unknown, skipping');
+    return;
+  }
+
+  // Prevent concurrent loads for same month
+  const lockKey = '_mfLoadLock_' + monthKey;
+  if (window[lockKey]) return;
+  window[lockKey] = true;
+
   try {
     const snap = await mfGetDb().collection(MF_FS_TXNS_COLLECTION)
       .where('familyId', '==', meta.familyId)
@@ -40441,21 +40453,26 @@ async function mfLoadFamilyTxns(monthKey) {
     const merged = { expenses:[], income:[], investments:[], additional:[] };
     snap.docs.forEach(doc => {
       const d = doc.data();
-      // Skip own data — already in local data object
-      if (d.uid === myUid) return;
+      // Skip own data — already in local data object. Double-check uid match.
+      if (!d.uid || d.uid === myUid) return;
       const name = d.memberName || 'Family';
       ['expenses','income','investments','additional'].forEach(type => {
         (d[type] || []).forEach(t => {
+          // Extra guard: never include entries that look like own data
+          if (t._fromFamily === false) return;
           merged[type].push({ ...t, _addedBy: t._addedBy || name, _fromFamily: true });
         });
       });
     });
     window._mfFamilyTxns[monthKey] = merged;
     console.log('[MF Family] Loaded txns for', monthKey,
-      '— exp:', merged.expenses.length, 'inc:', merged.income.length);
+      '— exp:', merged.expenses.length, 'inc:', merged.income.length,
+      '(skipped own uid:', myUid, ')');
   } catch(e) {
     console.warn('[MF Family] Load txns failed:', e.message);
     window._mfFamilyTxns[monthKey] = null;
+  } finally {
+    window[lockKey] = false;
   }
 }
 
@@ -40464,20 +40481,6 @@ function mfStartFamilyTxnsListener() {
   const meta = mfGetFamilyMeta();
   if (!meta) return;
   if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
-
-  // On start: eagerly load current + previous month so UI is immediately populated
-  const now = new Date();
-  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMk = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth()+1).padStart(2,'0')}`;
-  // Load silently in background — listener will keep it updated
-  mfLoadFamilyTxns(viewMonth).then(() => {
-    try { renderHome(); } catch(e) {}
-    try { renderTransactions && renderTransactions(); } catch(e) {}
-  }).catch(e => console.warn('[MF Family] Initial month load failed:', e.message));
-  // Also load previous month for cross-month views
-  mfLoadFamilyTxns(prevMk).catch(e => {});
-  // Push own transactions immediately so others see this member's data
-  setTimeout(() => mfSyncFamilyTxns(viewMonth), 2000);
 
   _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
     .where('familyId', '==', meta.familyId)
@@ -40492,15 +40495,20 @@ function mfStartFamilyTxnsListener() {
         }
       });
       // Reload each changed month from Firestore before re-rendering
-      await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
-      // Re-render current view
-      try { renderHome(); } catch(e) {}
-      try { renderTransactions && renderTransactions(); } catch(e) {}
-      console.log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
+      if (changedMonths.size > 0) {
+        await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
+        try { renderHome(); } catch(e) {}
+        try { renderTransactions && renderTransactions(); } catch(e) {}
+        console.log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
+      }
     }, err => console.warn('[MF Family] Txns listener error:', err.message));
-}
 
-// Get combined entries for a month (own + family)
+  // Load current month on start (no re-render, just populate cache)
+  mfLoadFamilyTxns(viewMonth).then(() => {
+    try { renderHome(); } catch(e) {}
+    try { renderTransactions && renderTransactions(); } catch(e) {}
+  }).catch(e => {});
+}
 window.mfGetCombinedEntries = function(monthKey, type) {
   const own    = (data[monthKey] || {})[type] || [];
   const family = (window._mfFamilyTxns[monthKey] || {})[type] || [];
