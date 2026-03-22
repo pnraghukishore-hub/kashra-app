@@ -21590,6 +21590,36 @@ let _homeLongPressType   = null;
 let _didLongPress        = false;
 
 // Touch handlers — most reliable on mobile PWA
+// Re-register card touch handlers as passive after innerHTML renders
+function _reRegisterPassiveTouchHandlers(container) {
+  if (!container) return;
+  // Find all elements with ontouchstart pointing to our safe handlers
+  container.querySelectorAll('[ontouchstart]').forEach(el => {
+    const attr = el.getAttribute('ontouchstart') || '';
+    const moveAttr = el.getAttribute('ontouchmove') || '';
+    const endAttr = el.getAttribute('ontouchend') || '';
+    // Parse function name and args from attribute string
+    const startFn = attr.match(/^(\w+)\((.*)\)$/);
+    const moveFn  = moveAttr.match(/^(\w+)\((.*)\)$/);
+    const endFn   = endAttr.match(/^(\w+)\((.*)\)$/);
+    if (!startFn) return;
+    // Remove inline attrs to prevent double-firing
+    el.removeAttribute('ontouchstart');
+    el.removeAttribute('ontouchmove');
+    el.removeAttribute('ontouchend');
+    // Re-add as passive
+    if (window[startFn[1]]) {
+      el.addEventListener('touchstart', e => window[startFn[1]](e, ...startFn[2].split(',').map(s => s.trim().replace(/['"]/g,''))), {passive:true});
+    }
+    if (moveFn && window[moveFn[1]]) {
+      el.addEventListener('touchmove', e => window[moveFn[1]](e), {passive:true});
+    }
+    if (endFn && window[endFn[1]]) {
+      el.addEventListener('touchend', e => window[endFn[1]](e), {passive:true});
+    }
+  });
+}
+
 function homeCardTouchStart(e, cardKey, type, subcat) {
   _didLongPress   = false;
   _homeLongPressKey = cardKey;
@@ -23617,6 +23647,17 @@ const MF_VERIFY_KEY       = 'mf_enc_verify';
 const MF_STORED_PP_KEY    = 'mf_enc_pp';
 // (declared early — see hoisted constants above)
 const MF_LAST_RESTORE_KEY = 'mf_last_restore';
+// ── Suppress non-passive touch warnings for scroll-safe handlers ──
+try {
+  const _ael = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(t, fn, opts) {
+    if ((t==='touchstart'||t==='touchmove') && opts===undefined) {
+      opts = {passive:true};
+    }
+    return _ael.call(this, t, fn, opts);
+  };
+} catch(e) {}
+
 const MF_STORAGE_KEY      = 'financeData';
 const MF_FAMILY_KEY       = 'mf_family_key';
 const MF_FAMILY_META      = 'mf_family_meta';
