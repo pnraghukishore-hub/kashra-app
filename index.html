@@ -10380,14 +10380,19 @@ function renderCalListView(container) {
   const mk = viewMonth;
   if (!data[mk]) { container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-light);font-weight:700;">No data for this month</div>'; return; }
   const toDisp = t => convertAmt(t.amount, t.currency);
-  // Assign _idx so Edit/Delete buttons resolve correctly to the real array position
+  // Own transactions — _idx points into data[mk] for edit/delete
   const exp  = (data[mk].expenses    || []).map((t, i) => ({...t, _type:'expense',     _idx:i}));
   const inc  = (data[mk].income      || []).map((t, i) => ({...t, _type:'income',      _idx:i}));
   const inv  = (data[mk].investments || []).map((t, i) => ({...t, _type:'investment',  _idx:i}));
   const add  = (data[mk].additional  || []).map((t, i) => ({...t, _type:'additional',  _idx:i}));
-  // Apply family author filter (same as calendar day view)
+  // Family transactions — _idx is family array index, _fromFamily flag set
+  const familyM = (window._mfFamilyTxns && window._mfFamilyTxns[mk]) || {};
+  const fexp = (familyM.expenses    || []).map((t, i) => ({...t, _type:'expense',     _idx:i, _fromFamily:true}));
+  const finc = (familyM.income      || []).map((t, i) => ({...t, _type:'income',      _idx:i, _fromFamily:true}));
+  const finv = (familyM.investments || []).map((t, i) => ({...t, _type:'investment',  _idx:i, _fromFamily:true}));
+  const fadd = (familyM.additional  || []).map((t, i) => ({...t, _type:'additional',  _idx:i, _fromFamily:true}));
   const authorOk = t => _authorFilter === 'all' || !_authorFilter || (t._addedBy||'').toLowerCase() === _authorFilter.toLowerCase();
-  const all  = [...inc, ...exp, ...inv, ...add]
+  const all  = [...inc, ...exp, ...inv, ...add, ...finc, ...fexp, ...finv, ...fadd]
     .filter(authorOk)
     .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 
@@ -10403,9 +10408,9 @@ function renderCalListView(container) {
   });
 
   const dateKeys = Object.keys(byDate).sort((a,b) => b.localeCompare(a));
-  const totalInc = inc.reduce((s,t)=>s+toDisp(t),0);
-  const totalExp = exp.reduce((s,t)=>s+toDisp(t),0);
-  const totalInv = inv.reduce((s,t)=>s+toDisp(t),0);
+  const totalInc = [...inc, ...finc].reduce((s,t)=>s+toDisp(t),0);
+  const totalExp = [...exp, ...fexp].reduce((s,t)=>s+toDisp(t),0);
+  const totalInv = [...inv, ...finv].reduce((s,t)=>s+toDisp(t),0);
 
   let html = ''; // 2a: No summary tiles in list view — transactions only
 
@@ -11241,8 +11246,14 @@ function onTxSearch(q) {
   const bgMap = { expense:'#EF444415', income:'#10B98115', investment:'#7C3AED15', debt:'#8B5CF615', given:'#FF6B9D15', additional:'#F59E0B15' };
 
   let results = [];
-  Object.keys(data).filter(mk => /^\d{4}-\d{2}$/.test(mk)).sort().reverse().forEach(mk => {
-    const m = data[mk];
+  const allMonths = [...new Set([
+    ...Object.keys(data).filter(mk => /^\d{4}-\d{2}$/.test(mk)),
+    ...Object.keys(window._mfFamilyTxns || {}).filter(mk => /^\d{4}-\d{2}$/.test(mk))
+  ])].sort().reverse();
+
+  allMonths.forEach(mk => {
+    // Own transactions
+    const m = data[mk] || {};
     ['expenses','income','investments','debts','givenToOthers','additional'].forEach(listKey => {
       (m[listKey] || []).forEach((e, idx) => {
         const cat  = (e.category    || '').toLowerCase();
@@ -11250,6 +11261,18 @@ function onTxSearch(q) {
         const amt  = String(e.amount || '');
         if (cat.includes(q) || desc.includes(q) || amt.includes(q)) {
           results.push({ ...e, _month: mk, _type: typeMap[listKey], _idx: idx });
+        }
+      });
+    });
+    // Family transactions
+    const fm = (window._mfFamilyTxns && window._mfFamilyTxns[mk]) || {};
+    ['expenses','income','investments','additional'].forEach(listKey => {
+      (fm[listKey] || []).forEach((e, idx) => {
+        const cat  = (e.category    || '').toLowerCase();
+        const desc = (e.description || '').toLowerCase();
+        const amt  = String(e.amount || '');
+        if (cat.includes(q) || desc.includes(q) || amt.includes(q)) {
+          results.push({ ...e, _month: mk, _type: typeMap[listKey], _idx: idx, _fromFamily: true });
         }
       });
     });
@@ -21904,13 +21927,24 @@ function getBudgetActual(goal, monthKey) {
   ensureMonth(monthKey);
   const m = data[monthKey];
   const cats = (goal.linkedCats || [goal.key]).map(c => c.toLowerCase().trim());
+  const fm = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
   let total = 0;
   ['expenses', 'investments', 'additional'].forEach(listKey => {
+    // Own transactions
     (m[listKey] || []).forEach(e => {
       const ec  = (e.category   || '').toLowerCase().trim();
       const eit = (e.investType || '').toLowerCase().trim(); // G: also check investType
       const esc = (e.subCategory|| '').toLowerCase().trim();
       // Match on category OR investType OR subCategory
+      if (cats.some(c => ec === c || eit === c || esc === c)) {
+        total += convertAmt(e.amount, e.currency);
+      }
+    });
+    // Family transactions — included in budget tracking
+    (fm[listKey] || []).forEach(e => {
+      const ec  = (e.category   || '').toLowerCase().trim();
+      const eit = (e.investType || '').toLowerCase().trim();
+      const esc = (e.subCategory|| '').toLowerCase().trim();
       if (cats.some(c => ec === c || eit === c || esc === c)) {
         total += convertAmt(e.amount, e.currency);
       }
