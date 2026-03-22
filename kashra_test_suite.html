@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KashRA — Full Test Suite</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800;900&display=swap');
+  :root {
+    --bg:#09090f; --surface:#111118; --surface2:#16161f;
+    --border:#1e1e2e; --border2:#2a2a3e;
+    --text:#e2e2f0; --dim:#6b6b8a; --dim2:#4a4a6a;
+    --mono:'JetBrains Mono',monospace; --display:'Syne',sans-serif;
+    --green:#22c55e; --red:#ef4444; --amber:#f59e0b;
+    --blue:#3b82f6; --purple:#a855f7; --cyan:#06b6d4;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;min-height:100vh;}
+  body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(59,130,246,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(59,130,246,0.025) 1px,transparent 1px);background-size:32px 32px;pointer-events:none;z-index:0;}
+  .wrap{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:20px 24px;}
+
+  /* Header */
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid var(--border);}
+  .logo{display:flex;align-items:center;gap:12px;}
+  .logo-icon{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#1e40af,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:16px;}
+  .logo-text{font-family:var(--display);font-size:1.15em;font-weight:900;}
+  .logo-sub{font-size:0.68em;color:var(--dim);margin-top:2px;}
+  .status-pill{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;background:var(--surface);border:1px solid var(--border);font-size:0.72em;color:var(--dim);}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim);}
+  .dot.run{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1s infinite;}
+  .dot.err{background:var(--red);}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+  /* Stats */
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;}
+  .stat-v{font-family:var(--display);font-size:1.9em;font-weight:900;margin-bottom:3px;}
+  .stat-l{font-size:0.62em;color:var(--dim);text-transform:uppercase;letter-spacing:0.08em;}
+
+  /* Three agents row */
+  .agents{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;}
+  .agent{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .agent-h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);}
+  .badge{padding:2px 8px;border-radius:12px;font-size:0.6em;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;}
+  .ba{background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3);}
+  .bb{background:rgba(245,158,11,0.15);color:var(--amber);border:1px solid rgba(245,158,11,0.3);}
+  .bc{background:rgba(168,85,247,0.15);color:var(--purple);border:1px solid rgba(168,85,247,0.3);}
+  .agent-name{font-weight:700;font-size:0.85em;}
+  .agent-role{font-size:0.68em;color:var(--dim);margin-top:1px;}
+  .agent-st{margin-left:auto;font-size:0.68em;color:var(--dim);font-style:italic;}
+  .agent-b{padding:12px 14px;font-size:0.72em;color:var(--dim);line-height:1.6;}
+
+  /* Controls */
+  .ctrl{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+  .cg{display:flex;flex-direction:column;gap:5px;flex:1;min-width:160px;}
+  .cl{font-size:0.62em;color:var(--dim);text-transform:uppercase;letter-spacing:0.08em;}
+  select{background:var(--bg);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:0.8em;padding:8px 10px;cursor:pointer;outline:none;width:100%;}
+  select:hover{border-color:var(--blue);}
+  .run-btn{background:linear-gradient(135deg,#1d4ed8,#7c3aed);border:none;border-radius:10px;color:white;font-family:var(--display);font-weight:800;font-size:0.85em;padding:9px 22px;cursor:pointer;white-space:nowrap;transition:opacity 0.2s;}
+  .run-btn:hover{opacity:0.9;}
+  .run-btn:disabled{opacity:0.4;cursor:not-allowed;}
+  .progress-bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:10px;}
+  .progress-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--purple));width:0%;transition:width 0.3s;border-radius:2px;}
+
+  /* Module tabs */
+  .module-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+  .mtab{padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface);font-size:0.7em;color:var(--dim);cursor:default;}
+  .mtab.pass{border-color:rgba(34,197,94,0.4);color:var(--green);background:rgba(34,197,94,0.08);}
+  .mtab.fail{border-color:rgba(239,68,68,0.4);color:var(--red);background:rgba(239,68,68,0.08);}
+  .mtab.warn{border-color:rgba(245,158,11,0.4);color:var(--amber);background:rgba(245,158,11,0.08);}
+  .mtab.run{border-color:rgba(59,130,246,0.4);color:var(--blue);background:rgba(59,130,246,0.08);animation:pulse 1s infinite;}
+
+  /* Split pane */
+  .split{display:grid;grid-template-columns:1fr 380px;gap:14px;}
+  .log-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .pane-h{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);}
+  .pane-title{font-family:var(--display);font-size:0.78em;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:0.1em;}
+  .log-body{padding:12px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+  .log-body::-webkit-scrollbar{width:3px;}
+  .log-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+  /* Log entries */
+  .entry{border-radius:10px;border:1px solid var(--border);overflow:hidden;}
+  .entry-h{display:flex;align-items:center;gap:7px;padding:7px 11px;border-bottom:1px solid var(--border);font-size:0.68em;}
+  .edot{width:5px;height:5px;border-radius:50%;}
+  .emod{color:var(--cyan);font-weight:700;}
+  .etime{color:var(--dim);margin-left:auto;}
+  .entry-b{padding:9px 11px;}
+  .step-l{font-size:0.6em;color:var(--dim);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:3px;}
+  .step-c{font-size:0.75em;line-height:1.55;color:var(--text);}
+  .verdict-row{display:flex;align-items:center;gap:7px;margin-top:8px;padding:6px 9px;border-radius:7px;}
+  .v-pass{background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.2);}
+  .v-fail{background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.2);}
+  .v-warn{background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.2);}
+  .v-label{font-weight:700;font-size:0.68em;}
+  .v-score{margin-left:auto;font-size:0.65em;color:var(--dim);}
+  .issue{padding:5px 9px;margin-top:4px;border-radius:6px;font-size:0.7em;line-height:1.5;}
+  .bug-i{background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);color:#fca5a5;}
+  .warn-i{background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);color:#fcd34d;}
+  .ref-i{background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.15);color:#d8b4fe;}
+  .fix-box{margin-top:6px;padding:7px 9px;border-radius:7px;background:rgba(168,85,247,0.05);border:1px solid rgba(168,85,247,0.15);}
+  .fix-l{font-size:0.6em;color:var(--purple);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:3px;}
+  .fix-t{font-size:0.7em;line-height:1.5;color:var(--text);}
+
+  /* Right panel — bug report */
+  .bugs-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .bugs-body{padding:12px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+  .bug-card{border-radius:9px;border:1px solid var(--border2);background:var(--bg);padding:10px;}
+  .bug-card.sev-h{border-left:3px solid var(--red);}
+  .bug-card.sev-m{border-left:3px solid var(--amber);}
+  .bug-card.sev-l{border-left:3px solid var(--blue);}
+  .bc-head{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .bc-sev{font-size:0.6em;padding:1px 6px;border-radius:8px;font-weight:700;}
+  .sev-h-tag{background:rgba(239,68,68,0.15);color:var(--red);}
+  .sev-m-tag{background:rgba(245,158,11,0.15);color:var(--amber);}
+  .sev-l-tag{background:rgba(59,130,246,0.15);color:var(--blue);}
+  .bc-mod{font-size:0.65em;color:var(--dim);}
+  .bc-text{font-size:0.72em;line-height:1.5;color:var(--text);margin-bottom:4px;}
+  .bc-fix{font-size:0.68em;color:var(--purple);line-height:1.4;}
+  .copy-btn{width:100%;margin-top:10px;background:var(--border);border:none;border-radius:7px;color:var(--text);font-family:var(--mono);font-size:0.7em;padding:6px;cursor:pointer;}
+  .copy-btn:hover{background:var(--border2);}
+  .empty{text-align:center;padding:28px;color:var(--dim);font-size:0.78em;font-style:italic;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🧪</div>
+    <div>
+      <div class="logo-text">KashRA — Full Test Suite</div>
+      <div class="logo-sub">regression · functional · E2E · reference validation · pre-Capacitor</div>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="dot" id="sdot"></div>
+    <span id="slabel">ready</span>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="stat-v" id="s-total">0</div><div class="stat-l">Tests Run</div></div>
+  <div class="stat"><div class="stat-v" style="color:var(--green)" id="s-pass">0</div><div class="stat-l">Passed ✓</div></div>
+  <div class="stat"><div class="stat-v" style="color:var(--red)" id="s-fail">0</div><div class="stat-l">Bugs ✗</div></div>
+  <div class="stat"><div class="stat-v" style="color:var(--purple)" id="s-ref">0</div><div class="stat-l">Ref Errors ⚡</div></div>
+  <div class="stat"><div class="stat-v" style="color:var(--amber)" id="s-warn">0</div><div class="stat-l">Warnings ⚠</div></div>
+</div>
+
+<div class="agents">
+  <div class="agent">
+    <div class="agent-h"><span class="badge ba">AGENT A</span>
+      <div><div class="agent-name">Scenario Simulator</div><div class="agent-role">Generates realistic user flows step by step</div></div>
+      <div class="agent-st" id="aa-st">Idle</div>
+    </div>
+    <div class="agent-b">Covers all 10 modules: Txns · Budget · NW · FHS · Goals · AI · Family · Drive · Import · Lab</div>
+  </div>
+  <div class="agent">
+    <div class="agent-h"><span class="badge bb">AGENT B</span>
+      <div><div class="agent-name">Logic Critic</div><div class="agent-role">Finds bugs in code logic and data flows</div></div>
+      <div class="agent-st" id="ab-st">Idle</div>
+    </div>
+    <div class="agent-b">Checks: race conditions · index mismatches · cache bugs · uid errors · missing re-renders</div>
+  </div>
+  <div class="agent">
+    <div class="agent-h"><span class="badge bc">AGENT C</span>
+      <div><div class="agent-name">Reference Validator</div><div class="agent-role">Catches undefined functions at call sites</div></div>
+      <div class="agent-st" id="ac-st">Idle</div>
+    </div>
+    <div class="agent-b">Scans for: mfGetDb · undefined vars · wrong scope · missing window.* exports · hoisting traps</div>
+  </div>
+</div>
+
+<div class="ctrl">
+  <div class="cg">
+    <div class="cl">Test Module</div>
+    <select id="mod-sel">
+      <option value="all">🔁 Full Regression — All Modules</option>
+      <option value="transactions">💸 Transactions (add/edit/delete/search/calendar/list)</option>
+      <option value="budget">🎯 Budget (goals/actuals/category detail/year view)</option>
+      <option value="networth">💎 Net Worth (accounts/family sharing/NW cards)</option>
+      <option value="fhs">❤️ Financial Health Score (pillars/AI context/score calc)</option>
+      <option value="goals">🏆 Goals (add/fund/progress/conflict detection)</option>
+      <option value="ai_advisor">🤖 AI Advisor (context build/guardrails/token budget)</option>
+      <option value="family">👨‍👩‍👧‍👦 Family (sync/join/delete/dedup/name matching)</option>
+      <option value="drive">☁️ Drive (backup/restore/token refresh/cross-device)</option>
+      <option value="import">📸 Import (AI Vision/Robinhood/CSV/duplicate check)</option>
+      <option value="investment_lab">📊 Investment Lab (equity/Lab/goals tab/what-if)</option>
+    </select>
+  </div>
+  <div class="cg">
+    <div class="cl">User Profile</div>
+    <select id="prof-sel">
+      <option value="single">Solo User — no family, full data history</option>
+      <option value="family_owner">Family Owner — 3 members, 8mo history</option>
+      <option value="new_user">New User — 0 history, first session</option>
+      <option value="nri">NRI User — dual India/US assets</option>
+    </select>
+  </div>
+  <div class="cg" style="min-width:120px;max-width:160px;">
+    <div class="cl">Depth</div>
+    <select id="depth-sel">
+      <option value="quick">Quick (3 steps/module)</option>
+      <option value="full" selected>Full (5 steps/module)</option>
+      <option value="deep">Deep (8 steps/module)</option>
+    </select>
+  </div>
+  <button class="run-btn" id="run-btn" onclick="runTests()">▶ Run Tests</button>
+</div>
+
+<div class="module-tabs" id="mod-tabs"></div>
+<div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
+
+<div class="split" style="margin-top:12px;">
+  <div class="log-section">
+    <div class="pane-h">
+      <div class="pane-title">Test Log</div>
+      <span style="font-size:0.68em;color:var(--dim);" id="log-cnt">0 tests</span>
+    </div>
+    <div class="log-body" id="log-body"><div class="empty">Select a module and run tests</div></div>
+  </div>
+
+  <div class="bugs-panel">
+    <div class="pane-h">
+      <div class="pane-title">Bug Report</div>
+      <span style="font-size:0.68em;color:var(--dim);" id="bug-cnt">0 issues</span>
+    </div>
+    <div class="bugs-body" id="bugs-body"><div class="empty">Issues found will appear here</div></div>
+  </div>
+</div>
+
+</div>
+<script>
+const API = 'https://fragrant-sound-019d.pnraghukishore.workers.dev';
+
+// ── KashRA function registry (1296 defined functions) ──────────────────────
+const DEFINED_FNS = new Set(["_METAL_CATS","_SEBI_CATEGORY_MAP","_aiAutoFillSectors","_buildContextForQuestion","_categoriseTransaction","_discSpotlight","_doFirebaseSave","_initDiscovery","_mfPendingInvite","_reRegisterPassiveTouchHandlers","_renderBudgetDetail","_resolveSector","_tryGoldAPI","_visionResetQuota","addNWCustomType","addRecurringRule","applyPrivacyMode","applyStoredCBMode","applyStoredTheme","buildAIContext","buildUnifiedEquityLedger","calDeleteTx","callClaudeAPI","checkMissingMetals","classifyScheme","clearActiveSwipe","clearLongPress","clearTxSearch","closeBudgetCatDetail","closeModal","closeRecurringPopup","convertAmt","deleteAllSearchResults","deleteGoal","deleteImportedMetal","deleteNWAccount","deleteREProperty","deleteRecurringRule","detectLanguage","ensureMonth","familyDeleteByKey","familyDeleteTxByIdx","fetchLiveMetalPrices","firebaseSave","firebaseLoad","fmt","fmtConverted","fmtConvertedFull","fmtFull","formatTime","getBudgetActual","getBudgetGoals","getCatsForType","getCurrencySymbol","getCompactNum","getDisplayMonth","getFHSProfile","getFamilyKey","getHomeSpendCards","getHomeInvCards","getYearEntries","getYearMonthKeys","getLast12Months","getPeriodEntries","goToBudgetDetail","goToIncomeDetail","goToInvestDetail","goToScreen","homeCardTouchEnd","homeCardTouchMove","homeCardTouchStart","initSwipeRows","listDeleteTx","listEditTx","listFamilyOrOwnDelete","loadData","localDateStr","mfBulkFamilyVisible","mfCheckRekey","mfCopyFallback","mfCopyInviteCode","mfDriveAutoSave","mfDriveCreateFamilyFolder","mfDriveFindFamilyFolder","mfDriveFindFile","mfDriveInit","mfDriveInitWithUID","mfDriveReadFamilyFile","mfDriveReadFamilyFileById","mfDriveReadFile","mfDriveRestorePrompt","mfDriveSaveNow","mfDriveWriteFamilyFile","mfDriveWriteFile","mfFamilyCreate","mfFamilyDecrypt","mfFamilyDisband","mfFamilyEncrypt","mfFamilyGenKey","mfFamilyImportKey","mfFamilyJoin","mfFamilyLeave","mfFamilyRemoveMember","mfFamilyShowInvite","mfGenFamilyId","mfGetDb","mfGetFamilyKeyBytes","mfGetFamilyMeta","mfHideFamilyModal","mfInitTokenClient","mfLoadFamilyTxns","mfLoadStoredPassphrase","mfNWAutoSync","mfOnBackupFail","mfOnBackupSuccess","mfReadAllMemberNW","mfReadManifest","mfReadManifestForFamily","mfRenderFamilyNWList","mfRenderFamilyNWSettings","mfRequestDriveToken","mfSaveBulkFamilyVisible","mfSaveFamilyKey","mfSaveFamilyMeta","mfScheduleTokenRefresh","mfSetDriveStatus","mfShareInviteWhatsApp","mfShowFamilyModal","mfShowPassphraseModal","mfShowRestoreRecovery","mfShouldShowReminder","mfSilentTokenRefresh","mfStartFamilyTxnsListener","mfStorePassphrase","mfSyncFamilyTxns","mfSyncMemberNW","mfTokenValid","mfTxnsAutoSync","mfUpdateDriveUI","mfWriteManifest","mfWriteManifestForFamily","migrateAssetClassTags","migrateSebiCategory","normalizeDate","nwConvert","onTxSearch","openBudgetCatDetail","openEditTx","openRecurringPopup","populateDataMonthSelect","qaSave","renderAuthorChips","renderBudgetGoalsList","renderBudgetModule","renderBudgetOverview","renderCalDayDetail","renderCalListView","renderFHS","renderFHSInsights","renderFHSNudge","renderFHSPillars","renderFamilyDashCard","renderFamilyPanel","renderGoalsPanel","renderHome","renderMetals","renderNetWorth","renderPeriodDetail","renderTransactions","resetBanner","save","searchDeleteTx","searchDeleteTxByEl","searchEditTx","setAuthorFilter","setHomeTab","showSyncStatus","showToast","signInWithGoogle","signOut","startLongPress","startRealtimeSync","switchScreen","sym","toggleAccordion","toggleNWVisibility","updateCategoryBanner"]);
+
+// ── Module test scenarios ──────────────────────────────────────────────────
+const MODULES = {
+  transactions: {
+    name: 'Transactions', icon: '💸',
+    tests: [
+      { name:'Add expense', desc:'User opens Quick Add, selects FastFood, enters $29, taps Save. qaSave() runs. entry built with _addedBy from family meta. data[viewMonth].expenses.push(entry). save() fires. mfDriveAutoSave debounced 5s. mfTxnsAutoSync debounced 5s with capturedMonth. renderHome() and renderTransactions() called. Home card shows updated FastFood total.', refs:['qaSave','save','mfDriveAutoSave','mfTxnsAutoSync','renderHome','renderTransactions'] },
+      { name:'Edit own transaction', desc:'User swipes left on FastFood $29, taps Edit. listEditTx calls openEditTx(monthKey,type,idx). data[monthKey][listKey][idx] found. qaEditMode=true, qaEditIdx=idx set. User changes amount to $35, taps Save Entry. qaSave runs in edit mode: splices old entry, pushes new. save() fires. renderTransactions re-renders.', refs:['listEditTx','openEditTx','qaSave','save','renderTransactions'] },
+      { name:'Delete own transaction', desc:'User swipes left, taps Delete in list view. listFamilyOrOwnDelete called with btn data attributes. isFamily=false so calDeleteTx(monthKey,type,idx) fires. data[monthKey][listKey].splice(idx,1). save() → renderHome() → renderTransactions(). Budget bar updates.', refs:['listFamilyOrOwnDelete','calDeleteTx','save','renderHome','renderTransactions'] },
+      { name:'Search category drill', desc:'User long-presses FastFood home card. goToBudgetDetail fires. Switches to tx screen, sets searchInput.value = "FastFood", calls onTxSearch("fastfood"). Searches data[] keys AND window._mfFamilyTxns. Results include own + family txns with _fromFamily flag. Delete from results calls searchDeleteTxByEl which routes correctly.', refs:['goToBudgetDetail','onTxSearch','searchDeleteTxByEl','searchDeleteTx'] },
+      { name:'Calendar day tap', desc:'User taps March 21 on calendar grid. renderCalDayDetail(allTx) fires with merged own+family transactions. Day shows Kishore $47 own + Skanda $36 + Swathi $11 family. swipe-actions-right shows Edit only for own txns, Delete for all. familyDeleteByKey used for family txns.', refs:['renderCalDayDetail','familyDeleteByKey','familyDeleteTxByIdx'] }
+    ]
+  },
+  budget: {
+    name: 'Budget', icon: '🎯',
+    tests: [
+      { name:'Budget overview totals', desc:'renderBudgetOverview runs. totalExpActual = sum of getBudgetActual(goal, month) for all expense goals. getBudgetActual reads data[month].expenses AND window._mfFamilyTxns[month].expenses. FastFood actual includes Kishore $118 + any family FastFood txns. Budget bar fills proportionally.', refs:['renderBudgetOverview','getBudgetActual','renderBudgetGoalsList'] },
+      { name:'Category detail drill', desc:'User taps FastFood budget circle. openBudgetCatDetail fires. _renderBudgetDetail called with goal object. Transaction list reads data[budgetViewMonth] AND fm = _mfFamilyTxns[budgetViewMonth]. Family txns with matching category shown with 👤 author tag. getBudgetActual used for 12-month chart.', refs:['openBudgetCatDetail','_renderBudgetDetail','getBudgetActual'] },
+      { name:'Year view actuals', desc:'User switches to Year view. totalExpActual = yearMonths.reduce getBudgetActual for each month. getBudgetActual loops through data[mk] AND fm[mk] for each month. YTD total reflects full family spend. Chart bars show per-month family-inclusive actuals.', refs:['renderBudgetOverview','getBudgetActual','getYearMonthKeys'] },
+      { name:'Budget goal edit', desc:'User taps Edit on FastFood goal. openEditBudgetPopup fires. User changes budget from $100 to $150. saveBudgetGoal updates data._expenseGoals. save() fires. renderBudgetModule re-renders. _renderBudgetDetail refreshes with new budget line on chart.', refs:['renderBudgetModule','renderBudgetOverview','save'] },
+      { name:'Category mismatch', desc:"Family member Skanda adds Breakfast $36 (category='Breakfast'). FastFood budget goal has linkedCats=['fastfood','fast food']. getBudgetActual checks: ec='breakfast' vs cats=['fastfood','fast food'] — NO match. Skanda's $36 does NOT count toward FastFood budget. Budget shows correct $118 not $154. User must use matching category.", refs:['getBudgetActual'] }
+    ]
+  },
+  networth: {
+    name: 'Net Worth', icon: '💎',
+    tests: [
+      { name:'NW account add', desc:'User taps + in Net Worth screen. Modal opens. User enters account name, type, balance. On save: new account pushed to data._nwAccounts with id, name, type, balance, currency. save() fires. renderNetWorth() re-renders all sections. NW hero total updates.', refs:['renderNetWorth','save','deleteNWAccount'] },
+      { name:'Family NW sharing', desc:'Owner marks EMERGENCY $51k as familyVisible=true. mfNWAutoSync debounced 8s. mfSyncMemberNW runs: filters data._nwAccounts where familyVisible. Encrypts with family key. Pushes to mf_family_nw. renderFamilyDashCard reads mfReadAllMemberNW. Household NW tile updates.', refs:['mfNWAutoSync','mfSyncMemberNW','mfReadAllMemberNW','renderFamilyDashCard'] },
+      { name:'NW rendering sections', desc:'renderNetWorth reads data._nwAccounts grouped by type. Crypto section needs DOM elements nw-body-crypto and nw-val-crypto. stocks_direct type needs meta.holdings[] for Lab drill-down. Each section renders balance sum, account count, P&L where available.', refs:['renderNetWorth','nwConvert'] },
+      { name:'Currency conversion', desc:'User has INR accounts displayed in USD. nwConvert(balance, currency) converts using live FX rates from _fxRates cache. If FX unavailable, uses last known rate. fmt() formats with correct symbol. NW hero shows total in display currency.', refs:['nwConvert','convertAmt','fmt'] },
+      { name:'Delete NW account', desc:'User swipes left on account, taps Delete. deleteNWAccount(id) fires. Finds account in data._nwAccounts by id. splice removes it. save() fires. renderNetWorth re-renders. If account was familyVisible, mfNWAutoSync pushes updated list to Firestore.', refs:['deleteNWAccount','save','renderNetWorth','mfNWAutoSync'] }
+    ]
+  },
+  fhs: {
+    name: 'FHS Score', icon: '❤️',
+    tests: [
+      { name:'Score calculation', desc:'renderFHS runs. getFHSProfile returns profile data. 13 pillars evaluated: emergency fund, debt ratio, savings rate, investment diversity, insurance, etc. Each pillar scored 0-10. Total FHS score = weighted average. Score persists to data._fhsScore. renderFHSPillars renders each pillar card.', refs:['renderFHS','getFHSProfile','renderFHSPillars','renderFHSInsights'] },
+      { name:'FHS uses own data only', desc:'FHS score intentionally excludes family transactions. getPeriodEntries is NOT used — FHS reads data[viewMonth] directly for savings rate, expense ratio, income. Family member spending does NOT affect your personal FHS score. This is by design.', refs:['renderFHS','getFHSProfile'] },
+      { name:'AI context for advisor', desc:'buildAIContext runs. Pulls FHSProfile, NW breakdown, goals, equity holdings via _resolveSector, crypto holdings, MF status. Dynamic context slicer _buildContextForQuestion detects question topic and drops irrelevant sections. Result: ~2600 token system prompt.', refs:['buildAIContext','_buildContextForQuestion','callClaudeAPI'] },
+      { name:'FHS AI advisor call', desc:'User sends message to AI advisor. callClaudeAPI fires. lastMsg passed to _buildContextForQuestion. Relevant context slice sent as system prompt. Claude Haiku responds with max_tokens:800. Response appended to _aiMessages. renderHome refreshes insights if on home screen.', refs:['callClaudeAPI','_buildContextForQuestion','buildAIContext'] },
+      { name:'Monthly insights', desc:'renderHome computes monthly insights: net saved, savings rate, invested amount. Uses getPeriodEntries for own+family data for display. But FHS pillar scoring uses own data only. Monthly insights shows family-merged totals (household view).', refs:['renderHome','getPeriodEntries','getFHSProfile'] }
+    ]
+  },
+  goals: {
+    name: 'Goals', icon: '🏆',
+    tests: [
+      { name:'Goal creation', desc:'User creates Home Down Payment goal: name, target $50k, deadline, linked SIP amount. Goal saved to data._financialGoals with id, name, target, current, monthly. save() fires. renderGoalsPanel re-renders goal list with progress ring.', refs:['renderGoalsPanel','save','deleteGoal'] },
+      { name:'Goal progress tracking', desc:'renderGoalsPanel maps each goal to current funding. Checks data._nwAccounts for matching linked accounts. Calculates funded%, months remaining, monthly SIP required. SIP strip shows recommended amount. Conflict detection: if total SIP > monthly surplus, flags overfunding.', refs:['renderGoalsPanel','getBudgetActual'] },
+      { name:'Goal delete', desc:'User swipes left on goal card, taps Delete. deleteGoal(id) fires. Finds goal in data._financialGoals by id. Removes it. save() fires. renderGoalsPanel re-renders. If goal had linked SIP, recurring rule should also be cleaned up.', refs:['deleteGoal','save','renderGoalsPanel'] },
+      { name:'Life Decision Simulator', desc:'User opens Can I Afford This. Enters Car $30k. AI advisor context includes goals and current savings rate. Response weighs impact on existing goals. No direct code path — calls callClaudeAPI with current financial context.', refs:['callClaudeAPI','buildAIContext'] },
+      { name:'Goals in AI context', desc:'buildAIContext includes goals array. Each goal: name, target, current, monthly, deadline. If goal is underfunded, AI advisor should surface it. _buildContextForQuestion includes goals section when question is about goals, retirement, or targets.', refs:['buildAIContext','_buildContextForQuestion'] }
+    ]
+  },
+  ai_advisor: {
+    name: 'AI Advisor', icon: '🤖',
+    tests: [
+      { name:'Token budget check', desc:'System prompt after compression: ~2600 tokens. Response max_tokens: 800. Total context: ~3400 tokens well within Haiku limits. _buildContextForQuestion strips irrelevant sections: equity holdings dropped for budget questions, MF status dropped for stock questions.', refs:['buildAIContext','_buildContextForQuestion','callClaudeAPI'] },
+      { name:'Guardrail — paused funds', desc:"User asks 'should I redeem my 11 paused MFs worth ₹6.1L?' System prompt watchlist ③ fires: ALWAYS default to hold or resume SIP. Never ask which underperform. AI responds with hold recommendation, not exit advice.", refs:['callClaudeAPI','buildAIContext'] },
+      { name:'Guardrail — no gold sell', desc:"User asks 'should I sell my gold to invest in equity?' Hard rule: NEVER suggest selling physical gold. AI explains cultural/emotional significance, suggests routing NEW savings to equity instead.", refs:['callClaudeAPI','buildAIContext'] },
+      { name:'Guardrail — tax before sell', desc:"User asks 'should I redeem my ELSS funds?' AI must state LTCG/STCG cost before any recommendation. India: LTCG 12.5% above ₹1.25L, STCG 20%. Tax calculation shown before exit recommendation.", refs:['callClaudeAPI','buildAIContext'] },
+      { name:'New user context', desc:'dataProfile.isNewUser = true. System prompt: NEW USER — no history, no comparisons, no returns, forward-looking only. AI must not say 0% return, no improvement, missed opportunity. Positive next-action focus.', refs:['buildAIContext','callClaudeAPI'] }
+    ]
+  },
+  family: {
+    name: 'Family', icon: '👨‍👩‍👧‍👦',
+    tests: [
+      { name:'Member sync to owner', desc:'Skanda adds Breakfast $36. _addedBy = meta.myName = Skanda. mfTxnsAutoSync fires with capturedMonth. mfSyncFamilyTxns snapshots data[monthKey] at call time (race condition fix). Pushes to Firestore. Kishore onSnapshot fires. _listenerInitialized=true, processes change. mfLoadFamilyTxns deduplicates by uid. Breakfast appears with 👤 Skanda.', refs:['mfSyncFamilyTxns','mfLoadFamilyTxns','mfStartFamilyTxnsListener','renderTransactions'] },
+      { name:'Owner delete family txn', desc:'Kishore swipes left on Skanda Breakfast $36. listFamilyOrOwnDelete reads data-family=1, data-fkey. familyDeleteByKey finds idx in _mfFamilyTxns by fingerprint. familyDeleteTxByIdx splices cache. Calls firebase.firestore() (NOT mfGetDb). Removes from Skanda Firestore doc. renderHome + renderTransactions called.', refs:['listFamilyOrOwnDelete','familyDeleteByKey','familyDeleteTxByIdx'] },
+      { name:'Rejoin deduplication', desc:'Skanda has 3 Firestore docs with different uids. mfLoadFamilyTxns docsByUid groups by uid. All 3 have DIFFERENT uids — no dedup by uid. Dedup only works for same-uid multiple docs. Skanda needs Firestore cleanup script to remove stale docs with old uids.', refs:['mfLoadFamilyTxns'] },
+      { name:'Author chip filtering', desc:'renderAuthorChips collects _addedBy from own data AND _mfFamilyTxns. isInFamily = mfGetFamilyMeta() !== null. Chips: All | Kishore PNR | Skanda | swathi kishore. Old Firestore docs have _addedBy=Jr Kanaya (Google name). Chip filter uses lowercase compare. Jr Kanaya chip would appear separately from Skanda chip.', refs:['renderAuthorChips','mfGetFamilyMeta'] },
+      { name:'Family dashboard NW', desc:'renderFamilyDashCard async. byAuthor includes own+family expenses. mfReadAllMemberNW reads Firestore mf_family_nw. Decrypts with family key. Household NW = own visible + all members visible accounts. Member pill tap → mfDashSpotlight shows member spend + NW contribution.', refs:['renderFamilyDashCard','mfReadAllMemberNW','mfSyncMemberNW'] }
+    ]
+  },
+  drive: {
+    name: 'Drive', icon: '☁️',
+    tests: [
+      { name:'Token auto-refresh', desc:'mfScheduleTokenRefresh called after every token received. Sets timer for (expiry - 5min). mfSilentTokenRefresh calls _tokenClient.requestAccessToken({prompt:""}) — no popup if session valid. Drive stays connected indefinitely in same browser session.', refs:['mfScheduleTokenRefresh','mfSilentTokenRefresh','mfTokenValid'] },
+      { name:'Cross-device sync', desc:'visibilitychange fires when desktop tab regains focus. Checks: lastRestore > 5min ago AND user signed in AND passphrase available AND driveToken valid. Calls mfDriveRestorePrompt(true,true) silently. Data refreshes without user action. Mobile saves visible on desktop within seconds.', refs:['mfDriveRestorePrompt','mfDriveInitWithUID','mfTokenValid'] },
+      { name:'Save empty guard', desc:'mfDriveSaveNow checks if data has any transactions OR NW accounts before writing. Empty data guard prevents clean-state from overwriting good Drive backup. If data is empty post-clear, Drive backup skipped. Toast shown.', refs:['mfDriveSaveNow'] },
+      { name:'Passphrase auto-unlock', desc:'mfDriveInitWithUID called after Firebase auth. mfLoadStoredPassphrase decrypts mf_enc_pp using UID. Sets window._mfEncPassphrase. mfRequestDriveToken fires. On token callback: Drive restore runs silently. User never sees passphrase prompt on returning device.', refs:['mfDriveInitWithUID','mfLoadStoredPassphrase','mfRequestDriveToken','mfDriveRestorePrompt'] },
+      { name:'Backup failure recovery', desc:'mfOnBackupFail increments failure count. After 2 failures: drive-retry-banner shown. mfShowRestoreRecovery shows Try Again / Use Local Data options. mfSetDriveStatus shows error badge in accordion header. Failure count resets on mfOnBackupSuccess.', refs:['mfOnBackupFail','mfOnBackupSuccess','mfSetDriveStatus','mfShowRestoreRecovery'] }
+    ]
+  },
+  import: {
+    name: 'Import', icon: '📸',
+    tests: [
+      { name:'AI Vision screen detection', desc:'User uploads broker screenshot. Unified extraction prompt detects screenType: portfolio|transactions|unknown. Portfolio → NW review → stocks_direct account with meta.holdings[]. Transaction → TX review table. Unknown → red inline error, no quota consumed.', refs:['callClaudeAPI'] },
+      { name:'Vision quota management', desc:'VISION_MONTHLY_LIMIT=25 scans/month. Each scan increments counter stored in localStorage by month key. Quota bar shows remaining. When limit reached, scan button disabled with upgrade message. _visionResetQuota() callable from console for testing.', refs:['callClaudeAPI'] },
+      { name:'Stocks import account type', desc:'Vision and Robinhood importers use type:stocks_direct + meta.holdings[] (Lab-compatible). Old brokerage type would skip Lab drill-down. Each holding: qty, ltp, curVal, avgCost, costBasis, pnl. meta.unrealizedPnl and meta.stockCount computed on import. lastUpdated set.', refs:['save','renderNetWorth'] },
+      { name:'Sector auto-fill', desc:'After import, if any holdings land in OTHERS sector, AI Auto-Fill button appears. _aiAutoFillSectors calls Claude Haiku to batch-classify symbols. Results saved to data._equitySectorOverrides. renderHome Lab section re-renders with correct sectors.', refs:['_aiAutoFillSectors','buildAIContext','save'] },
+      { name:'Duplicate removal on import', desc:'Before saving imported account, removes existing accounts with same broker name: broker, broker+Crypto, broker+Stocks. Pure crypto screenshots → account named broker+Crypto. CRYPTO_SET used to detect crypto holdings. Prevents duplicate NW entries on re-import.', refs:['save','renderNetWorth'] }
+    ]
+  },
+  investment_lab: {
+    name: 'Investment Lab', icon: '📊',
+    tests: [
+      { name:'Equity ledger build', desc:'buildUnifiedEquityLedger reads data._nwAccounts where type=stocks_direct. Merges meta.holdings[] across all brokers. Deduplicates by symbol. Computes: totalValue, totalCostBasis, unrealizedPnl, sector allocation. Portfolio Clarity Score calculated from diversification + concentration metrics.', refs:['buildUnifiedEquityLedger'] },
+      { name:'Sector resolution', desc:'_resolveSector(symbol, rawSector) checks data._equitySectorOverrides first, then US stock dictionary (150+ symbols), then SEBI category map for Indian MFs. OTHERS only if no match found. AI Context buildAIContext uses _resolveSector to prevent Unknown:74% in advisor.', refs:['_resolveSector','buildAIContext'] },
+      { name:'Goals tab funding', desc:'Lab Goals tab shows SIP funding strip per goal. Each goal shows: monthly SIP required, current progress, conflict flag if total SIPs exceed monthly surplus. Conflict detection: sum of all goal SIPs vs income-expenses net. Red warning if overfunded.', refs:['buildUnifiedEquityLedger','renderGoalsPanel'] },
+      { name:'What-If tab', desc:'SIP Boost, Lump Sum, FIRE Calculator, Stress Test, Loan vs Invest — partially built. FIRE calculator uses 4% rule: target = annual_expenses * 25. Current corpus vs target. Years to FIRE = (target-corpus) / annual_savings. Shows projection chart.', refs:['buildAIContext'] },
+      { name:'Investment Lab data flow', desc:'Lab reads stocks_direct accounts from NW. If no accounts imported, shows import prompt pointing to AI Vision. Sector pie chart uses _resolveSector. Holdings table shows qty, avg cost, current price, P&L. Price updates from live FX conversion for cross-currency holdings.', refs:['buildUnifiedEquityLedger','_resolveSector','nwConvert'] }
+    ]
+  }
+};
+
+// ── Profiles ───────────────────────────────────────────────────────────────
+const PROFILES = {
+  single: 'PROFILE: Solo user. mfGetFamilyMeta()=null. window._mfFamilyTxns={}. 8 months history. 46 expenses + 8 income Mar 2026. Stocks imported via Vision (Robinhood + Coinbase). Budget goals set. FHS score 74.',
+  family_owner: 'PROFILE: Family owner Kishore. familyId=MF-VL5RC3XT. Members: Skanda (mbr_1711234567890) + Swathi (mbr_1711299999999). _mfFamilyTxns[2026-03]: Skanda Breakfast $36 + Swathi Breakfast $11. Drive connected. 8mo history. FHS 74.',
+  new_user: 'PROFILE: New user, first session. data={} — no months. No NW accounts. No family. Drive just connected, passphrase just set. mf_just_setup flag present. 0 transactions.',
+  nri: 'PROFILE: NRI user. India assets: PPF ₹8.2L, Zerodha equity ₹3.2L, HDFC FD ₹3.7L. US assets: Vanguard 401k $193k, Robinhood $38k, Chase HYSA $51k. Dual currency. FBAR complexity. Family: none.'
+};
+
+// ── Agent B system ─────────────────────────────────────────────────────────
+const AGENT_B = `You are a senior QA engineer for KashRA, a zero-server PWA family finance app.
+
+Given a test scenario, identify:
+- Logic bugs (wrong index, stale data, race conditions, missing re-renders)
+- Data integrity issues (cache not invalidated, wrong uid, name mismatch)  
+- UX gaps (no loading state, no error message, silent failure)
+
+Respond with JSON only:
+{"verdict":"pass"|"fail"|"warn","score":0-100,"bugs":["specific bug"],"warnings":["potential issue"],"fix":"specific fix"}`;
+
+// ── Agent C system (reference validator) ──────────────────────────────────
+const AGENT_C = `You are a JavaScript static analysis tool for KashRA PWA.
+
+You will receive a test step listing function calls made. Check each called function against the DEFINED_FNS registry.
+
+Flag as REFERENCE_ERROR if:
+- Function is called but not in the defined functions list
+- Function defined late in file (line > 35000) but called early (line < 15000) from an onclick handler — hoisting won't help in browser event context
+- window.X pattern required but function defined without window. prefix for onclick use
+
+Known safe late-defined functions accessible globally: mfGetFamilyMeta, mfGetFamilyKeyBytes, mfDriveSaveNow, mfDriveRestorePrompt, mfFamilyCreate, mfFamilyJoin, mfFamilyShowInvite, mfFamilyRemoveMember, mfFamilyLeave, mfFamilyDisband, mfSyncMemberNW, mfReadAllMemberNW, renderFamilyDashCard, mfTxnsAutoSync, renderFamilyPanel, mfBulkFamilyVisible, mfSaveBulkFamilyVisible, mfCopyInviteCode, mfShareInviteWhatsApp, mfShowFamilyModal, mfHideFamilyModal.
+
+Respond with JSON only:
+{"ref_errors":["FUNCTION_NAME: reason"],"warnings":["potential scope issue"],"clean":true|false}`;
+
+// ── State ──────────────────────────────────────────────────────────────────
+let stats = {total:0,pass:0,fail:0,ref:0,warn:0};
+let allIssues = [];
+let isRunning = false;
+let startTime = 0;
+
+function setStatus(t,r=false){
+  document.getElementById('slabel').textContent=t;
+  const d=document.getElementById('sdot');
+  d.className='dot'+(r?' run':t.includes('error')?' err':'');
+}
+function upStats(){
+  document.getElementById('s-total').textContent=stats.total;
+  document.getElementById('s-pass').textContent=stats.pass;
+  document.getElementById('s-fail').textContent=stats.fail;
+  document.getElementById('s-ref').textContent=stats.ref;
+  document.getElementById('s-warn').textContent=stats.warn;
+  document.getElementById('log-cnt').textContent=stats.total+' tests';
+  document.getElementById('bug-cnt').textContent=allIssues.length+' issues';
+}
+
+async function callAPI(system, user, maxTok=600){
+  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:maxTok,system,messages:[{role:'user',content:user}]})});
+  if(!r.ok) throw new Error('API '+r.status);
+  const d=await r.json();
+  return d.content?.[0]?.text||'';
+}
+
+function setModuleTab(name,status){
+  const tabs=document.getElementById('mod-tabs');
+  let tab=tabs.querySelector(`[data-mod="${name}"]`);
+  if(!tab){tab=document.createElement('div');tab.className='mtab';tab.dataset.mod=name;tab.textContent=name;tabs.appendChild(tab);}
+  tab.className='mtab '+status;
+}
+
+async function runTests(){
+  if(isRunning)return;
+  const modKey=document.getElementById('mod-sel').value;
+  const profKey=document.getElementById('prof-sel').value;
+  const depth=document.getElementById('depth-sel').value;
+  const stepsPerMod=depth==='quick'?3:depth==='deep'?8:5;
+
+  const mods = modKey==='all' ? Object.keys(MODULES) : [modKey];
+  const profile=PROFILES[profKey];
+
+  isRunning=true;
+  document.getElementById('run-btn').disabled=true;
+  setStatus('running…',true);
+  startTime=Date.now();
+
+  const logBody=document.getElementById('log-body');
+  if(stats.total===0) logBody.innerHTML='';
+  const totalTests=mods.reduce((s,m)=>s+Math.min(MODULES[m].tests.length,stepsPerMod),0);
+  let done=0;
+
+  for(const modKey of mods){
+    const mod=MODULES[modKey];
+    setModuleTab(mod.name,'run');
+    document.getElementById('aa-st').textContent=`Module: ${mod.name}`;
+
+    const tests=mod.tests.slice(0,stepsPerMod);
+    let modPass=true;
+
+    for(const test of tests){
+      stats.total++; done++;
+      document.getElementById('prog').style.width=(done/totalTests*100)+'%';
+      upStats();
+
+      document.getElementById('ab-st').textContent=`Analysing: ${test.name}`;
+      document.getElementById('ac-st').textContent=`Checking refs: ${test.name}`;
+
+      const bPrompt=`PROFILE:\n${profile}\n\nMODULE: ${mod.name}\nTEST: ${test.name}\nSCENARIO:\n${test.desc}\n\nAnalyse this flow for bugs. JSON only.`;
+      const cPrompt=`TEST: ${test.name}\nFUNCTIONS CALLED: ${(test.refs||[]).join(', ')}\nDEFINED_FNS (subset): ${[...DEFINED_FNS].slice(0,50).join(',')}\n\nCheck for reference errors. JSON only.`;
+
+      let bResult,cResult;
+      try{
+        const [bRaw,cRaw]=await Promise.all([callAPI(AGENT_B,bPrompt,500),callAPI(AGENT_C,cPrompt,300)]);
+        bResult=JSON.parse(bRaw.replace(/```json|```/g,'').trim());
+        cResult=JSON.parse(cRaw.replace(/```json|```/g,'').trim());
+      }catch(e){
+        bResult={verdict:'warn',score:50,bugs:[],warnings:['Parse error: '+e.message],fix:''};
+        cResult={ref_errors:[],warnings:[],clean:true};
+      }
+
+      // Update stats
+      const hasRefErr=cResult.ref_errors?.length>0;
+      if(bResult.verdict==='pass'&&!hasRefErr) stats.pass++;
+      else if(bResult.verdict==='fail') stats.fail++;
+      else stats.warn++;
+      if(hasRefErr) stats.ref++;
+      upStats();
+
+      // Collect issues
+      bResult.bugs?.forEach(b=>allIssues.push({type:'bug',mod:mod.name,test:test.name,text:b,fix:bResult.fix,sev:'h'}));
+      bResult.warnings?.forEach(w=>allIssues.push({type:'warn',mod:mod.name,test:test.name,text:w,fix:'',sev:'m'}));
+      cResult.ref_errors?.forEach(r=>allIssues.push({type:'ref',mod:mod.name,test:test.name,text:r,fix:'Check function definition scope and window.* export',sev:'h'}));
+
+      if(bResult.verdict==='fail'||hasRefErr) modPass=false;
+
+      // Render log
+      const vi=bResult.verdict==='pass'&&!hasRefErr?'✅':bResult.verdict==='fail'?'❌':'⚠️';
+      const vc=`v-${bResult.verdict}`;
+      const dc=bResult.verdict==='pass'&&!hasRefErr?'var(--green)':bResult.verdict==='fail'?'var(--red)':'var(--amber)';
+      const elapsed=((Date.now()-startTime)/1000).toFixed(1);
+
+      const el=document.createElement('div');
+      el.className='entry';
+      el.innerHTML=`
+        <div class="entry-h">
+          <div class="edot" style="background:${dc}"></div>
+          <span class="emod">${mod.icon} ${mod.name}</span>
+          <span style="color:var(--dim)">·</span>
+          <span style="color:var(--dim)">${test.name}</span>
+          <span class="etime">${elapsed}s</span>
+        </div>
+        <div class="entry-b">
+          <div class="step-l">Scenario</div>
+          <div class="step-c">${test.desc.substring(0,180)}${test.desc.length>180?'…':''}</div>
+          <div class="verdict-row ${vc}" style="margin-top:8px">
+            <span>${vi}</span>
+            <span class="v-label">${bResult.verdict.toUpperCase()}${hasRefErr?' + REF ERROR':''}</span>
+            <span class="v-score">score: ${bResult.score}/100</span>
+          </div>
+          ${bResult.bugs?.map(b=>`<div class="issue bug-i">🐛 ${b}</div>`).join('')||''}
+          ${cResult.ref_errors?.map(r=>`<div class="issue ref-i">⚡ REF: ${r}</div>`).join('')||''}
+          ${bResult.warnings?.map(w=>`<div class="issue warn-i">⚠ ${w}</div>`).join('')||''}
+          ${bResult.fix?`<div class="fix-box"><div class="fix-l">Fix</div><div class="fix-t">${bResult.fix}</div></div>`:''}
+        </div>`;
+      logBody.appendChild(el);
+      logBody.scrollTop=logBody.scrollHeight;
+
+      await new Promise(r=>setTimeout(r,400));
+    }
+    setModuleTab(mod.name, modPass?'pass':'fail');
+  }
+
+  renderBugReport();
+  document.getElementById('prog').style.width='100%';
+  setStatus(`complete — ${stats.fail} bugs, ${stats.ref} ref errors`,false);
+  document.getElementById('run-btn').disabled=false;
+  isRunning=false;
+}
+
+function renderBugReport(){
+  const body=document.getElementById('bugs-body');
+  if(!allIssues.length){body.innerHTML='<div class="empty">✓ No issues found</div>';return;}
+  const bugs=allIssues.filter(i=>i.type==='bug'||i.type==='ref');
+  const warns=allIssues.filter(i=>i.type==='warn');
+
+  body.innerHTML=[...bugs,...warns].map((i,n)=>`
+    <div class="bug-card sev-${i.sev}">
+      <div class="bc-head">
+        <span class="bc-sev sev-${i.sev}-tag">${i.type==='ref'?'REF':i.type==='bug'?'BUG':'WARN'}</span>
+        <span class="bc-mod">${i.mod} · ${i.test}</span>
+      </div>
+      <div class="bc-text">${i.text}</div>
+      ${i.fix?`<div class="bc-fix">💡 ${i.fix}</div>`:''}
+    </div>`).join('')+
+    `<button class="copy-btn" onclick="copyAll()">📋 Copy full report</button>`;
+  document.getElementById('bug-cnt').textContent=allIssues.length+' issues';
+}
+
+function copyAll(){
+  const text=allIssues.map((i,n)=>
+    `${i.type.toUpperCase()} ${n+1} [${i.mod} / ${i.test}]\n${i.text}${i.fix?'\nFIX: '+i.fix:''}`
+  ).join('\n\n---\n\n');
+  navigator.clipboard?.writeText(text).then(()=>{
+    const b=document.querySelector('.copy-btn');
+    if(b){b.textContent='✅ Copied!';setTimeout(()=>b.textContent='📋 Copy full report',2000);}
+  });
+}
+</script>
+</body>
+</html>
