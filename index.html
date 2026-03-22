@@ -39104,6 +39104,7 @@ window.mfDriveSaveNow = async function() {
   if (!mfTokenValid() || !window._mfEncPassphrase) return;
 
   // Safety guard — never overwrite Drive backup with empty data
+  // Exception: allow if user has family credentials (new member, zero personal data is valid)
   const rawData = localStorage.getItem(MF_STORAGE_KEY);
   const dataObj = rawData ? JSON.parse(rawData) : {};
   const allMonthKeys = Object.keys(dataObj).filter(k => /^\d{4}-\d{2}$/.test(k));
@@ -39111,7 +39112,8 @@ window.mfDriveSaveNow = async function() {
     const m = dataObj[k] || {};
     return (m.expenses||[]).length > 0 || (m.income||[]).length > 0 || (m.investments||[]).length > 0;
   }) || (dataObj._nwAccounts||[]).length > 0;
-  if (!hasAnyData) {
+  const hasFamilyCredentials = !!localStorage.getItem(MF_FAMILY_KEY);
+  if (!hasAnyData && !hasFamilyCredentials) {
     console.warn('[KashRA Drive] Backup skipped — data appears empty, refusing to overwrite Drive');
     showSyncStatus('⚠️ Backup skipped — restore your data first', '#F59E0B', 4000);
     return;
@@ -40012,6 +40014,21 @@ window.mfFamilyJoin = async function() {
     mfHideFamilyModal();
     showToast(`✅ Joined ${payload.ownerName}'s family!`, 3000);
     renderFamilyPanel();
+    // Re-render home + start family sync immediately
+    if (typeof mfRenderFamilyNWSettings === 'function') mfRenderFamilyNWSettings();
+    if (typeof renderFamilyDashCard === 'function') {
+      clearTimeout(window._familyDashTimer);
+      window._familyDashTimer = setTimeout(renderFamilyDashCard, 500);
+    }
+    setTimeout(async () => {
+      if (typeof mfStartFamilyTxnsListener === 'function') mfStartFamilyTxnsListener();
+      if (typeof mfLoadFamilyTxns === 'function') {
+        await mfLoadFamilyTxns(viewMonth);
+        try { renderHome(); } catch(e) {}
+        try { renderTransactions && renderTransactions(); } catch(e) {}
+      }
+      if (typeof mfSyncMemberNW === 'function') mfSyncMemberNW();
+    }, 1000);
   } catch(e) {
     console.error('Join error:', e);
     showToast('❌ Join failed: ' + e.message, 3000);
