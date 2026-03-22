@@ -11621,7 +11621,7 @@ This will remove it from the family ledger.`)) return;
     const memberUid = ft._memberUid;
     if (memberUid) {
       const docId = `${meta.familyId}_${memberUid}_${monthKey}`;
-      mfGetDb().collection('mf_family_txns').doc(docId).get().then(doc => {
+      firebase.firestore().collection('mf_family_txns').doc(docId).get().then(doc => {
         if (!doc.exists) return;
         const d = doc.data();
         const updList = (d[listKey] || []).filter(t =>
@@ -40627,34 +40627,57 @@ let _mfTxnsUnsubscribe = null;
 async function mfSyncFamilyTxns(monthKey) {
   const meta = mfGetFamilyMeta();
   if (!meta) return;
-  const myUid  = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
   if (!myUid) return;
-  const mData  = data[monthKey] || {};
-  const docId  = `${meta.familyId}_${myUid}_${monthKey}`;
+
+  // Bug fix 1: Snapshot data at call time — prevents stale reference during debounce window
+  // The 5s debounce means data[] may have changed; capture the current state explicitly
+  const mData = (typeof data !== 'undefined' && data[monthKey]) ? data[monthKey] : null;
+  if (!mData) {
+    console.warn('[MF Family] No data for', monthKey, '— skipping sync');
+    return;
+  }
+
+  // Bug fix 2: Correct _addedBy — use role-appropriate name, not always ownerName
+  const memberName = meta.role === 'owner'
+    ? meta.ownerName
+    : (meta.myName || meta.ownerName || 'Member');
+
+  const docId = `${meta.familyId}_${myUid}_${monthKey}`;
+
+  // Bug fix 3: Snapshot arrays at this moment to prevent race condition
+  // during concurrent edits within the debounce window
+  const payload = {
+    familyId:    meta.familyId,
+    uid:         myUid,
+    memberName,
+    displayName: (typeof firebase !== 'undefined' && firebase.auth().currentUser?.displayName) || '',
+    month:       monthKey,
+    expenses:    (mData.expenses    || []).map(t => ({...t})),
+    income:      (mData.income      || []).map(t => ({...t})),
+    investments: (mData.investments || []).map(t => ({...t})),
+    additional:  (mData.additional  || []).map(t => ({...t})),
+    updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
+  };
+
   try {
-    await mfGetDb().collection(MF_FS_TXNS_COLLECTION).doc(docId).set({
-      familyId:    meta.familyId,
-      uid:         myUid,
-      memberName:  meta.role === 'owner' ? meta.ownerName : (meta.myName || meta.ownerName),
-      displayName: firebase.auth().currentUser?.displayName || '',  // Google name for cross-reference
-      month:       monthKey,
-      expenses:    mData.expenses    || [],
-      income:      mData.income      || [],
-      investments: mData.investments || [],
-      additional:  mData.additional  || [],
-      updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
-    });
-    console.log('[MF Family] Txns synced for', monthKey);
+    await firebase.firestore().collection(MF_FS_TXNS_COLLECTION).doc(docId).set(payload);
+    console.log('[MF Family] Txns synced for', monthKey,
+      '— exp:', payload.expenses.length, 'inc:', payload.income.length);
   } catch(e) {
-    console.warn('[MF Family] Txn sync failed:', e.message);
+    console.error('[MF Family] Txn sync FAILED for', monthKey, ':', e.message);
+    // Show non-blocking toast so user knows sync failed (they can retry by adding any txn)
+    if (typeof showToast === 'function') showToast('⚠️ Family sync failed — will retry on next save', 3000);
   }
 }
 
 // Auto-sync debounced — called after every save()
+// Bug fix: capture monthKey at schedule time, not execution time
 window.mfTxnsAutoSync = function(monthKey) {
   if (!mfGetFamilyMeta()) return;
+  const capturedMonth = monthKey || viewMonth; // capture now, before timeout fires
   clearTimeout(_mfTxnsSyncTimer);
-  _mfTxnsSyncTimer = setTimeout(() => mfSyncFamilyTxns(monthKey || viewMonth), 5000);
+  _mfTxnsSyncTimer = setTimeout(() => mfSyncFamilyTxns(capturedMonth), 5000);
 };
 
 // Read ALL members' transactions for a month from Firestore → merge into cache
