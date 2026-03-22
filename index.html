@@ -39104,7 +39104,6 @@ window.mfDriveSaveNow = async function() {
   if (!mfTokenValid() || !window._mfEncPassphrase) return;
 
   // Safety guard — never overwrite Drive backup with empty data
-  // Exception: allow if user has family credentials (new member, zero personal data is valid)
   const rawData = localStorage.getItem(MF_STORAGE_KEY);
   const dataObj = rawData ? JSON.parse(rawData) : {};
   const allMonthKeys = Object.keys(dataObj).filter(k => /^\d{4}-\d{2}$/.test(k));
@@ -39112,8 +39111,7 @@ window.mfDriveSaveNow = async function() {
     const m = dataObj[k] || {};
     return (m.expenses||[]).length > 0 || (m.income||[]).length > 0 || (m.investments||[]).length > 0;
   }) || (dataObj._nwAccounts||[]).length > 0;
-  const hasFamilyCredentials = !!localStorage.getItem(MF_FAMILY_KEY);
-  if (!hasAnyData && !hasFamilyCredentials) {
+  if (!hasAnyData) {
     console.warn('[KashRA Drive] Backup skipped — data appears empty, refusing to overwrite Drive');
     showSyncStatus('⚠️ Backup skipped — restore your data first', '#F59E0B', 4000);
     return;
@@ -39926,6 +39924,11 @@ window.mfFamilyShowInvite = async function() {
 
 // ── JOIN FAMILY (Member flow) ──────────────────────────────────────
 window.mfFamilyJoin = async function() {
+  // Member needs Drive connected to access owner's shared folder
+  if (!window._driveToken) {
+    showToast('⚠️ Connect Google Drive first: Settings → Zero-Knowledge Backup → Connect', 4000);
+    return; // Keep modal open so user can come back
+  }
   const input = document.getElementById('mf-family-join-input');
   const raw   = (input?.value || '').trim();
   if (!raw) { showToast('⚠️ Paste the invite code first', 2000); return; }
@@ -40014,21 +40017,6 @@ window.mfFamilyJoin = async function() {
     mfHideFamilyModal();
     showToast(`✅ Joined ${payload.ownerName}'s family!`, 3000);
     renderFamilyPanel();
-    // Re-render home + start family sync immediately
-    if (typeof mfRenderFamilyNWSettings === 'function') mfRenderFamilyNWSettings();
-    if (typeof renderFamilyDashCard === 'function') {
-      clearTimeout(window._familyDashTimer);
-      window._familyDashTimer = setTimeout(renderFamilyDashCard, 500);
-    }
-    setTimeout(async () => {
-      if (typeof mfStartFamilyTxnsListener === 'function') mfStartFamilyTxnsListener();
-      if (typeof mfLoadFamilyTxns === 'function') {
-        await mfLoadFamilyTxns(viewMonth);
-        try { renderHome(); } catch(e) {}
-        try { renderTransactions && renderTransactions(); } catch(e) {}
-      }
-      if (typeof mfSyncMemberNW === 'function') mfSyncMemberNW();
-    }, 1000);
   } catch(e) {
     console.error('Join error:', e);
     showToast('❌ Join failed: ' + e.message, 3000);
@@ -40418,9 +40406,7 @@ window.mfTxnsAutoSync = function(monthKey) {
 async function mfLoadFamilyTxns(monthKey) {
   const meta = mfGetFamilyMeta();
   if (!meta) return;
-  const myUid  = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
-  const myName = meta.role === 'owner' ? meta.ownerName : (meta.myName || '');
-  const myDocId = `${meta.familyId}_${myUid}_${monthKey}`;
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
   try {
     const snap = await mfGetDb().collection(MF_FS_TXNS_COLLECTION)
       .where('familyId', '==', meta.familyId)
@@ -40430,10 +40416,8 @@ async function mfLoadFamilyTxns(monthKey) {
     const merged = { expenses:[], income:[], investments:[], additional:[] };
     snap.docs.forEach(doc => {
       const d = doc.data();
-      // Skip own data — already in local data object (three-way check)
-      if (doc.id === myDocId) return;
-      if (d.uid && d.uid === myUid) return;
-      if (myName && d.memberName === myName && meta.role === 'owner') return;
+      // Skip own data — already in local data object
+      if (d.uid === myUid) return;
       const name = d.memberName || 'Family';
       ['expenses','income','investments','additional'].forEach(type => {
         (d[type] || []).forEach(t => {
@@ -40443,10 +40427,384 @@ async function mfLoadFamilyTxns(monthKey) {
     });
     window._mfFamilyTxns[monthKey] = merged;
     console.log('[MF Family] Loaded txns for', monthKey,
-      '— exp:', merged.expenses.length, 'inc:', merged.income.length,
-      '(my doc:', myDocId, ')');
+      '— exp:', merged.expenses.length, 'inc:', merged.income.length);
   } catch(e) {
     console.warn('[MF Family] Load txns failed:', e.message);
     window._mfFamilyTxns[monthKey] = null;
   }
 }
+
+// Start real-time listener for family transactions
+function mfStartFamilyTxnsListener() {
+  const meta = mfGetFamilyMeta();
+  if (!meta) return;
+  if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
+  _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
+    .where('familyId', '==', meta.familyId)
+    .onSnapshot(snap => {
+      // Invalidate cache for changed months
+      snap.docChanges().forEach(change => {
+        const month = change.doc.data()?.month;
+        if (month) delete window._mfFamilyTxns[month];
+      });
+      // Re-render current view
+      try { renderHome(); } catch(e) {}
+      try { renderTransactions && renderTransactions(); } catch(e) {}
+      console.log('[MF Family] Txns updated from Firestore');
+    }, err => console.warn('[MF Family] Txns listener error:', err.message));
+}
+
+// Get combined entries for a month (own + family)
+window.mfGetCombinedEntries = function(monthKey, type) {
+  const own    = (data[monthKey] || {})[type] || [];
+  const family = (window._mfFamilyTxns[monthKey] || {})[type] || [];
+  return [...own, ...family];
+};
+
+// Push MY visible NW accounts to Firestore (called after every save())
+async function mfSyncMemberNW() {
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!meta || !keyBytes) return;
+  if (typeof data === 'undefined') return; // main app not yet initialized
+
+  const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
+  if (!myUid) return;
+
+  const visibleAccounts = (data._nwAccounts || [])
+    .filter(a => a.familyVisible)
+    .map(a => ({
+      id:       a.id,
+      name:     a.name,
+      type:     a.type,
+      balance:  a.balance || 0,
+      currency: a.currency || 'USD',
+      memberName: meta.role === 'owner' ? meta.ownerName : meta.myName
+    }));
+
+  try {
+    const b64 = await mfFamilyEncrypt({ accounts: visibleAccounts, updatedAt: Date.now() }, keyBytes);
+    await mfGetDb().collection(MF_FS_NW_COLLECTION).doc(`${meta.familyId}_${myUid}`).set({
+      enc: b64,
+      familyId: meta.familyId,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('[MF Family] NW sync pushed:', visibleAccounts.length, 'visible accounts');
+  } catch(e) {
+    console.warn('[MF Family] NW sync failed:', e.message);
+  }
+}
+
+// Read ALL members' visible NW from Firestore and aggregate
+async function mfReadAllMemberNW() {
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!meta || !keyBytes) return [];
+
+  try {
+    const snapshot = await mfGetDb().collection(MF_FS_NW_COLLECTION)
+      .where('familyId', '==', meta.familyId)
+      .get();
+
+    const allAccounts = [];
+    for (const doc of snapshot.docs) {
+      try {
+        const payload = await mfFamilyDecrypt(doc.data().enc, keyBytes);
+        if (payload?.accounts) allAccounts.push(...payload.accounts);
+      } catch(e) { /* skip undecryptable docs — old key */ }
+    }
+    return allAccounts;
+  } catch(e) {
+    console.warn('[MF Family] Read member NW failed:', e.message);
+    return [];
+  }
+}
+
+// Hook into save() — debounced 8s so we don't hammer Firestore
+let _mfNWSyncTimer = null;
+window.mfNWAutoSync = function() {
+  if (!mfGetFamilyMeta()) return;
+  clearTimeout(_mfNWSyncTimer);
+  _mfNWSyncTimer = setTimeout(mfSyncMemberNW, 8000);
+};
+
+// ── BULK FAMILY VISIBLE (Settings) ────────────────────────────────
+// Temporary state for bulk edit — not saved until user taps Save
+window._mfBulkFamilyState = {};
+
+window.mfRenderFamilyNWSettings = function() {
+  const meta = mfGetFamilyMeta();
+  const group = document.getElementById('family-nw-settings-group');
+  if (!group) return;
+
+  // Only show if user is in a family
+  if (!meta) { group.style.display = 'none'; return; }
+  group.style.display = 'block';
+
+  const accounts = data._nwAccounts || [];
+  const countLabel = document.getElementById('family-nw-count-label');
+  const visCount = accounts.filter(a => a.familyVisible).length;
+  if (countLabel) countLabel.textContent = `${visCount} of ${accounts.length} accounts shared`;
+
+  // Init bulk state from current account values
+  window._mfBulkFamilyState = {};
+  accounts.forEach(a => { window._mfBulkFamilyState[a.id] = !!a.familyVisible; });
+
+  mfRenderFamilyNWList();
+};
+
+function mfRenderFamilyNWList() {
+  const listEl = document.getElementById('family-nw-account-list');
+  if (!listEl) return;
+  const accounts = data._nwAccounts || [];
+  if (!accounts.length) {
+    listEl.innerHTML = '<div style="font-size:0.8em;color:#999;padding:8px 0;">No NW accounts yet</div>';
+    return;
+  }
+  listEl.innerHTML = accounts.map(a => {
+    const checked = window._mfBulkFamilyState[a.id] ? 'checked' : '';
+    const bal = typeof nwConvert === 'function' ? nwConvert(a.balance||0, a.currency) : (a.balance||0);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F5F5F5;">
+      <input type="checkbox" id="fnw-${a.id}" ${checked}
+        onchange="window._mfBulkFamilyState['${a.id}']=this.checked"
+        style="width:18px;height:18px;cursor:pointer;accent-color:#7C3AED;">
+      <label for="fnw-${a.id}" style="flex:1;cursor:pointer;">
+        <div style="font-weight:800;font-size:0.85em;color:#1E2A6E;">${a.name}</div>
+        <div style="font-size:0.7em;color:#999;font-weight:600;">${a.type} · ${fmt(bal)}</div>
+      </label>
+    </div>`;
+  }).join('');
+}
+
+window.mfBulkFamilyVisible = function(selectAll) {
+  const accounts = data._nwAccounts || [];
+  accounts.forEach(a => { window._mfBulkFamilyState[a.id] = selectAll; });
+  mfRenderFamilyNWList();
+};
+
+window.mfSaveBulkFamilyVisible = function() {
+  if (!data._nwAccounts) return;
+  let changed = 0;
+  data._nwAccounts.forEach(a => {
+    const newVal = !!window._mfBulkFamilyState[a.id];
+    if (a.familyVisible !== newVal) { a.familyVisible = newVal; changed++; }
+  });
+  if (changed > 0) {
+    save();
+    showToast(`✅ ${changed} account${changed!==1?'s':''} updated — family visibility saved`, 2500);
+    mfRenderFamilyNWSettings(); // refresh count
+    if (typeof renderFamilyDashCard === 'function') renderFamilyDashCard();
+  } else {
+    showToast('No changes to save', 1500);
+  }
+};
+
+// ── MEMBER SPOTLIGHT ──────────────────────────────────────────────
+window.mfDashSpotlight = async function(memberName, uid) {
+  const spotlight = document.getElementById('family-dash-spotlight');
+  const nameEl    = document.getElementById('family-dash-spotlight-name');
+  const spendEl   = document.getElementById('family-dash-spotlight-spend');
+  const nwEl      = document.getElementById('family-dash-spotlight-nw');
+  if (!spotlight) return;
+
+  // Per-member spend
+  const byAuthor = window._mfDashByAuthor || {};
+  let memberSpend = byAuthor[memberName] || 0;
+  if (!memberSpend) {
+    const firstName = memberName.split(' ')[0].toLowerCase();
+    Object.keys(byAuthor).forEach(k => {
+      if (k.toLowerCase().includes(firstName)) memberSpend += byAuthor[k];
+    });
+  }
+
+  if (nameEl) nameEl.textContent = memberName;
+  if (spendEl) spendEl.textContent = fmt(memberSpend);
+  if (nwEl) nwEl.textContent = '…';
+  spotlight.style.display = 'block';
+
+  // Highlight pill
+  document.querySelectorAll('#family-dash-members > div').forEach(el => {
+    el.style.opacity = el.innerHTML.includes(memberName) ? '1' : '0.45';
+  });
+
+  // Load member NW from Firestore
+  try {
+    const keyBytes = mfGetFamilyKeyBytes();
+    if (keyBytes) {
+      const allAccounts = await mfReadAllMemberNW();
+      const isLiab = a => ['loan','credit_card','mortgage','debt','other_liability'].includes(a.type);
+      const memberAccounts = allAccounts.filter(a =>
+        a.memberName && a.memberName.toLowerCase().includes(memberName.split(' ')[0].toLowerCase())
+      );
+      if (memberAccounts.length > 0) {
+        const nwTotal = memberAccounts.reduce((s, a) => {
+          const bal = typeof nwConvert === 'function'
+            ? nwConvert(a.balance || 0, a.currency) : (a.balance || 0);
+          return s + (isLiab(a) ? -Math.abs(bal) : bal);
+        }, 0);
+        if (nwEl) nwEl.textContent = fmt(nwTotal);
+      } else {
+        if (nwEl) nwEl.textContent = 'No shared accounts';
+      }
+    }
+  } catch(e) { if (nwEl) nwEl.textContent = '—'; }
+};
+window.mfDashClearSpotlight = function() {
+  const spotlight = document.getElementById('family-dash-spotlight');
+  if (spotlight) spotlight.style.display = 'none';
+  document.querySelectorAll('#family-dash-members > div').forEach(el => {
+    el.style.opacity = '1';
+  });
+};
+
+// ── SETTINGS PANEL RENDERER ────────────────────────────────────────
+window.renderFamilyPanel = async function() {
+  const container = document.getElementById('family-panel-content');
+  const label     = document.getElementById('family-settings-label');
+  if (!container) return;
+
+  const meta     = mfGetFamilyMeta();
+  const keyBytes = mfGetFamilyKeyBytes();
+
+  // NO FAMILY YET
+  if (!meta || !keyBytes) {
+    if (label) label.textContent = 'Zero-knowledge · Drive-based · No servers';
+    container.innerHTML = `
+      <div style="text-align:center;padding:8px 0 12px;">
+        <div style="font-size:0.8em;color:#666;font-weight:600;margin-bottom:16px;line-height:1.6;">
+          Invite your family to share transactions and budgets.<br>
+          Your private data stays on your device — always.
+        </div>
+        <button onclick="mfFamilyCreate()" style="width:100%;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;border:none;border-radius:12px;padding:13px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;margin-bottom:10px;">
+          👑 Create Family Group
+        </button>
+        <button onclick="mfShowFamilyModal('join')" style="width:100%;background:#F5F5F5;color:#1E2A6E;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.88em;cursor:pointer;">
+          🔗 Join a Family Group
+        </button>
+      </div>`;
+    return;
+  }
+
+  // LOAD MANIFEST
+  let manifest = null;
+  try {
+    manifest = await mfReadManifest(meta.folderId, keyBytes);
+  } catch(e) { /* offline or error */ }
+
+  const isOwner      = meta.role === 'owner';
+  const members      = (manifest?.members || []);
+  const activeMembers = members.filter(m => m.status === 'active');
+  const slots        = `${activeMembers.length} of ${MF_MAX_MEMBERS} members`;
+
+  if (label) label.textContent = isOwner ? `👑 Owner · ${slots}` : `👤 Member · ${meta.ownerName}'s family`;
+
+  const memberRows = members.map(m => {
+    const isMe = (!isOwner && m.uid === meta.myUid) || (isOwner && m.role === 'owner');
+    const statusDot = m.status === 'active' ? '🟢' : '⚫';
+    const joinDate  = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
+    const removeBtn = isOwner && m.role !== 'owner' && m.status === 'active'
+      ? `<button onclick="mfFamilyRemoveMember('${m.uid}','${m.name}')" style="background:#FFF0F0;border:1px solid #EF444430;border-radius:8px;padding:4px 10px;font-family:Nunito;font-size:0.72em;font-weight:800;color:#EF4444;cursor:pointer;">Remove</button>`
+      : '';
+    const youBadge = isMe ? `<span style="background:#EEF4FF;color:#4F46E5;font-size:0.65em;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;">You</span>` : '';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F5F5F5;">
+        <span style="font-size:1.1em;">${statusDot}</span>
+        <div style="flex:1;">
+          <div style="font-weight:800;font-size:0.85em;color:#1E2A6E;">${m.name}${youBadge}</div>
+          <div style="font-size:0.7em;color:#999;font-weight:600;">${m.role === 'owner' ? '👑 Owner' : '👤 Member'} · Joined ${joinDate}</div>
+        </div>
+        ${removeBtn}
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="background:#F8FAFF;border-radius:12px;padding:12px 14px;margin-bottom:14px;border:1.5px solid #E0E7FF;">
+      <div style="font-weight:900;font-size:0.85em;color:#1E2A6E;margin-bottom:2px;">
+        ${isOwner ? '👑 You are the family owner' : `👤 Member of ${meta.ownerName}'s family`}
+      </div>
+      <div style="font-size:0.72em;color:#666;font-weight:600;">Family ID: ${meta.familyId} · ${slots}</div>
+    </div>
+
+    <div style="margin-bottom:14px;">${memberRows}</div>
+
+    ${isOwner && activeMembers.length < MF_MAX_MEMBERS ? `
+    <button onclick="mfFamilyShowInvite()" style="width:100%;background:#10B981;color:white;border:none;border-radius:12px;padding:12px;font-family:Nunito;font-weight:900;font-size:0.85em;cursor:pointer;margin-bottom:8px;">
+      ➕ Invite Member
+    </button>` : ''}
+
+    ${isOwner ? `
+    <button onclick="mfFamilyDisband()" style="width:100%;background:none;border:1.5px solid #EF444440;border-radius:12px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;color:#EF4444;">
+      🗑 Disband Family Group
+    </button>` : `
+    <button onclick="mfFamilyLeave()" style="width:100%;background:none;border:1.5px solid #EF444440;border-radius:12px;padding:10px;font-family:Nunito;font-weight:800;font-size:0.78em;cursor:pointer;color:#EF4444;">
+      👋 Leave Family Group
+    </button>`}`;
+};
+
+// Backdrop close
+document.getElementById('mf-family-overlay')?.addEventListener('click', function(e) {
+  if (e.target === this) mfHideFamilyModal();
+});
+
+// ── SILENT RE-KEY CHECK (runs on every open for members) ──────────
+// When owner removes a member and rotates the key, remaining members
+// get the new key silently via Firestore on their next open.
+async function mfCheckRekey() {
+  const meta = mfGetFamilyMeta();
+  if (!meta || meta.role === 'owner') return; // owner already has new key
+
+  const myUid = meta.myUid;
+  if (!myUid) return;
+
+  try {
+    const doc = await mfGetDb()
+      .collection(MF_FS_REKEY_COLLECTION)
+      .doc(`${meta.familyId}_${myUid}`)
+      .get();
+
+    if (!doc.exists) return; // no re-key pending
+
+    const newKeyB64 = doc.data()?.newKeyB64;
+    if (!newKeyB64) return;
+
+    // Apply new key silently
+    const newKeyBytes = Uint8Array.from(atob(newKeyB64), c => c.charCodeAt(0));
+    mfSaveFamilyKey(newKeyBytes);
+    console.log('[MF Family] Silent re-key applied — new family key installed');
+
+    // Delete the rekey doc so it only applies once
+    await mfGetDb()
+      .collection(MF_FS_REKEY_COLLECTION)
+      .doc(`${meta.familyId}_${myUid}`)
+      .delete();
+
+    showToast('🔐 Family security updated', 2000);
+  } catch(e) {
+    console.warn('[MF Family] Re-key check failed:', e.message);
+  }
+}
+
+// Trigger family dash card render after module loads
+setTimeout(() => {
+  // renderFamilyDashCard is called by renderHome() with 800ms debounce
+  // Start real-time txns listener + background tasks
+  setTimeout(async () => {
+    mfCheckRekey();
+    mfSyncMemberNW();
+    // Guard: data and viewMonth may not be defined if main app hasn't loaded yet
+    const mk = (typeof viewMonth !== 'undefined') ? viewMonth : null;
+    if (mk && typeof data !== 'undefined') {
+      mfSyncFamilyTxns(mk);
+      mfStartFamilyTxnsListener();
+      await mfLoadFamilyTxns(mk);
+      try { renderHome(); } catch(e) {}
+      try { renderTransactions && renderTransactions(); } catch(e) {}
+    }
+  }, 3000);
+}, 800);
+
+})(); // end family IIFE
+</script>
+
+</body>
+</html>
