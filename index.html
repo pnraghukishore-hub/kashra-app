@@ -10492,17 +10492,27 @@ function renderTransactions() {
   }
 
   // Gather all transactions — normalize dates so YYYY-M-D matches YYYY-MM-DD
+  // Merge own + family transactions (same as Home screen)
+  const familyM = (window._mfFamilyTxns && window._mfFamilyTxns[viewMonth]) || {};
   let allTx = [];
   const pushTx = (list, type) => (list||[]).forEach((e,i) => {
-    const normDate = normalizeDate(e.date);   // ← fix: always padded YYYY-MM-DD
+    const normDate = normalizeDate(e.date);
     allTx.push({...e, date: normDate, _type: type, _idx: i});
   });
+  // Own transactions
   pushTx(m.expenses,      'expense');
   pushTx(m.income,        'income');
   pushTx(m.investments,   'investment');
   pushTx(m.debts,         'debt');
   pushTx(m.givenToOthers, 'given');
   pushTx(m.additional,    'additional');
+  // Family transactions (other members only — own already included above)
+  if (mfGetFamilyMeta && mfGetFamilyMeta()) {
+    pushTx(familyM.expenses,    'expense');
+    pushTx(familyM.income,      'income');
+    pushTx(familyM.investments, 'investment');
+    pushTx(familyM.additional,  'additional');
+  }
 
   // Summary — apply author filter then convert to display currency
   const toDisp = t => convertAmt(t.amount, t.currency);
@@ -38952,6 +38962,8 @@ function mfInitTokenClient() {
       window._driveTokenExpiry = Date.now() + ((resp.expires_in || 3600) - 60) * 1000;
       localStorage.setItem(MF_SETUP_KEY, 'done');
       mfUpdateDriveUI(true);
+      // Schedule silent refresh before token expires
+      if (typeof mfScheduleTokenRefresh === 'function') mfScheduleTokenRefresh();
 
       // If we just restored on previous load, skip the prompt — break the reload loop
       if (localStorage.getItem('mf_just_restored') === '1') {
@@ -39029,6 +39041,34 @@ function mfTokenValid() {
   return window._driveToken && Date.now() < window._driveTokenExpiry;
 }
 
+// ── Silent token refresh — called proactively before expiry ───────
+let _mfTokenRefreshTimer = null;
+function mfScheduleTokenRefresh() {
+  if (_mfTokenRefreshTimer) clearTimeout(_mfTokenRefreshTimer);
+  if (!window._driveTokenExpiry) return;
+  // Refresh 5 minutes before expiry
+  const msUntilRefresh = window._driveTokenExpiry - Date.now() - (5 * 60 * 1000);
+  if (msUntilRefresh <= 0) {
+    // Already expired or about to — refresh now
+    mfSilentTokenRefresh();
+    return;
+  }
+  _mfTokenRefreshTimer = setTimeout(mfSilentTokenRefresh, msUntilRefresh);
+  console.log('[KashRA] Token refresh scheduled in', Math.round(msUntilRefresh/60000), 'min');
+}
+
+function mfSilentTokenRefresh() {
+  if (!_tokenClient) return;
+  if (!window._fbUser) return; // not signed in
+  console.log('[KashRA] Silently refreshing Drive token…');
+  // GIS silent refresh — no popup if session still valid
+  try {
+    _tokenClient.requestAccessToken({ prompt: '' });
+  } catch(e) {
+    console.warn('[KashRA] Silent token refresh failed:', e.message);
+  }
+}
+
 // ── Drive REST API helpers ─────────────────────────────────────────
 async function mfDriveFindFile() {
   // Check cached file ID first
@@ -39101,6 +39141,12 @@ async function mfDriveReadFile(fileId) {
 
 // ── Save to Drive ──────────────────────────────────────────────────
 window.mfDriveSaveNow = async function() {
+  // Auto-refresh token if expired
+  if (window._driveToken && !mfTokenValid()) {
+    console.log('[KashRA] Token expired before save — refreshing');
+    mfSilentTokenRefresh();
+    await new Promise(r => setTimeout(r, 2000)); // wait for refresh
+  }
   if (!mfTokenValid() || !window._mfEncPassphrase) return;
 
   // Safety guard — never overwrite Drive backup with empty data
@@ -39871,7 +39917,7 @@ window.mfFamilyCreate = async function() {
 
     // 5. Save to localStorage
     mfSaveFamilyKey(keyBytes);
-    mfSaveFamilyMeta({ familyId, folderId, manifestFileId, role: 'owner', ownerName });
+    mfSaveFamilyMeta({ familyId, folderId, manifestFileId, role: 'owner', ownerName, myUid: familyId + '_owner' });
 
     // 6. Show invite screen
     mfHideFamilyModal();
@@ -40482,19 +40528,27 @@ function mfStartFamilyTxnsListener() {
   if (!meta) return;
   if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
 
+  let _listenerInitialized = false; // skip initial delivery
+
   _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
     .where('familyId', '==', meta.familyId)
     .onSnapshot(async snap => {
-      // Collect changed months
+      // Skip the initial delivery (all docs as "added") — we load explicitly below
+      if (!_listenerInitialized) {
+        _listenerInitialized = true;
+        return;
+      }
+      // Only react to actual changes after initialization
       const changedMonths = new Set();
       snap.docChanges().forEach(change => {
-        const month = change.doc.data()?.month;
-        if (month) {
-          delete window._mfFamilyTxns[month]; // invalidate cache
-          changedMonths.add(month);
+        if (change.type === 'added' || change.type === 'modified' || change.type === 'removed') {
+          const month = change.doc.data()?.month;
+          if (month) {
+            delete window._mfFamilyTxns[month];
+            changedMonths.add(month);
+          }
         }
       });
-      // Reload each changed month from Firestore before re-rendering
       if (changedMonths.size > 0) {
         await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
         try { renderHome(); } catch(e) {}
@@ -40503,7 +40557,7 @@ function mfStartFamilyTxnsListener() {
       }
     }, err => console.warn('[MF Family] Txns listener error:', err.message));
 
-  // Load current month on start (no re-render, just populate cache)
+  // Explicit initial load — correctly skips own uid
   mfLoadFamilyTxns(viewMonth).then(() => {
     try { renderHome(); } catch(e) {}
     try { renderTransactions && renderTransactions(); } catch(e) {}
