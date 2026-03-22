@@ -40017,6 +40017,31 @@ window.mfFamilyJoin = async function() {
     mfHideFamilyModal();
     showToast(`✅ Joined ${payload.ownerName}'s family!`, 3000);
     renderFamilyPanel();
+
+    // Load historical transactions for new member — past 6 months
+    // so Swathi/new members see transactions that happened before they joined
+    try {
+      const now = new Date();
+      const monthsToLoad = [];
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        monthsToLoad.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+      }
+      showToast('📥 Loading family history…', 2000);
+      // Start listener for real-time updates
+      if (typeof mfStartFamilyTxnsListener === 'function') mfStartFamilyTxnsListener();
+      // Load all past months in parallel
+      await Promise.all(monthsToLoad.map(mk => mfLoadFamilyTxns(mk)));
+      // Also push own txns so others can see this new member's data
+      await Promise.all(monthsToLoad.map(mk => mfSyncFamilyTxns(mk)));
+      showToast('✅ Family history loaded', 2000);
+      try { renderHome(); } catch(e) {}
+      try { renderTransactions && renderTransactions(); } catch(e) {}
+      console.log('[MF Family] New member loaded history for', monthsToLoad.length, 'months');
+    } catch(e) {
+      console.warn('[MF Family] History load failed:', e.message);
+    }
+
   } catch(e) {
     console.error('Join error:', e);
     showToast('❌ Join failed: ' + e.message, 3000);
@@ -40439,18 +40464,39 @@ function mfStartFamilyTxnsListener() {
   const meta = mfGetFamilyMeta();
   if (!meta) return;
   if (_mfTxnsUnsubscribe) _mfTxnsUnsubscribe();
+
+  // On start: eagerly load current + previous month so UI is immediately populated
+  const now = new Date();
+  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMk = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth()+1).padStart(2,'0')}`;
+  // Load silently in background — listener will keep it updated
+  mfLoadFamilyTxns(viewMonth).then(() => {
+    try { renderHome(); } catch(e) {}
+    try { renderTransactions && renderTransactions(); } catch(e) {}
+  }).catch(e => console.warn('[MF Family] Initial month load failed:', e.message));
+  // Also load previous month for cross-month views
+  mfLoadFamilyTxns(prevMk).catch(e => {});
+  // Push own transactions immediately so others see this member's data
+  setTimeout(() => mfSyncFamilyTxns(viewMonth), 2000);
+
   _mfTxnsUnsubscribe = mfGetDb().collection(MF_FS_TXNS_COLLECTION)
     .where('familyId', '==', meta.familyId)
-    .onSnapshot(snap => {
-      // Invalidate cache for changed months
+    .onSnapshot(async snap => {
+      // Collect changed months
+      const changedMonths = new Set();
       snap.docChanges().forEach(change => {
         const month = change.doc.data()?.month;
-        if (month) delete window._mfFamilyTxns[month];
+        if (month) {
+          delete window._mfFamilyTxns[month]; // invalidate cache
+          changedMonths.add(month);
+        }
       });
+      // Reload each changed month from Firestore before re-rendering
+      await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
       // Re-render current view
       try { renderHome(); } catch(e) {}
       try { renderTransactions && renderTransactions(); } catch(e) {}
-      console.log('[MF Family] Txns updated from Firestore');
+      console.log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
     }, err => console.warn('[MF Family] Txns listener error:', err.message));
 }
 
