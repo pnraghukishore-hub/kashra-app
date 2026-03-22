@@ -342,10 +342,10 @@ const MODULES = {
 
 // ── Profiles ───────────────────────────────────────────────────────────────
 const PROFILES = {
-  single: 'PROFILE: Solo user. mfGetFamilyMeta()=null. window._mfFamilyTxns={}. 8 months history. 46 expenses + 8 income Mar 2026. Stocks imported via Vision (Robinhood + Coinbase). Budget goals set. FHS score 74.',
-  family_owner: 'PROFILE: Family owner Kishore. familyId=MF-VL5RC3XT. Members: Skanda (mbr_1711234567890) + Swathi (mbr_1711299999999). _mfFamilyTxns[2026-03]: Skanda Breakfast $36 + Swathi Breakfast $11. Drive connected. 8mo history. FHS 74.',
-  new_user: 'PROFILE: New user, first session. data={} — no months. No NW accounts. No family. Drive just connected, passphrase just set. mf_just_setup flag present. 0 transactions.',
-  nri: 'PROFILE: NRI user. India assets: PPF ₹8.2L, Zerodha equity ₹3.2L, HDFC FD ₹3.7L. US assets: Vanguard 401k $193k, Robinhood $38k, Chase HYSA $51k. Dual currency. FBAR complexity. Family: none.'
+  single: 'Solo user. No family. 8mo history. 46 expenses, 8 income. Robinhood+Coinbase imported. Budget goals set. FHS 74.',
+  family_owner: 'Family owner. familyId=MF-VL5RC3XT. Members: Skanda+Swathi. _mfFamilyTxns[2026-03]: Skanda $36 + Swathi $11. Drive on. FHS 74.',
+  new_user: 'New user. data={}, 0 transactions, no NW, no family. Drive just set up.',
+  nri: 'NRI user. India: PPF+Zerodha+FD. US: 401k+Robinhood+HYSA. Dual currency. No family.'
 };
 
 // ── Agent B system ─────────────────────────────────────────────────────────
@@ -395,7 +395,7 @@ function upStats(){
   document.getElementById('bug-cnt').textContent=allIssues.length+' issues';
 }
 
-async function callAPI(system, user, maxTok=600){
+async function callAPI(system, user, maxTok=700){
   const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:maxTok,system,messages:[{role:'user',content:user}]})});
   if(!r.ok) throw new Error('API '+r.status);
@@ -446,7 +446,7 @@ async function runTests(){
       document.getElementById('ab-st').textContent=`Analysing: ${test.name}`;
       document.getElementById('ac-st').textContent=`Checking refs: ${test.name}`;
 
-      const bPrompt=`PROFILE:\n${profile}\n\nMODULE: ${mod.name}\nTEST: ${test.name}\nSCENARIO:\n${test.desc}\n\nAnalyse this flow for bugs. JSON only.`;
+      const bPrompt=`PROFILE:\n${profile}\n\nMODULE: ${mod.name}\nTEST: ${test.name}\nSCENARIO:\n${test.desc.slice(0,350)}\n\nFind bugs. JSON only.`;
       // Pre-check refs against complete DEFINED_FNS before calling Agent C
       const calledRefs = test.refs || [];
       const genuineMissing = calledRefs.filter(f => !DEFINED_FNS.has(f));
@@ -464,7 +464,7 @@ async function runTests(){
       };
       try {
         // Agent B: logic analysis
-        const bRaw = await callAPI(AGENT_B, bPrompt, 900);
+        const bRaw = await callAPI(AGENT_B, bPrompt, 700);
         bResult = sanitiseJSON(bRaw, {verdict:'warn',score:50,bugs:[],warnings:['Response truncated'],fix:''});
         // Agent C: ref validation — only calls API if refs are genuinely missing
         const genuineMissing = (test.refs||[]).filter(f => !DEFINED_FNS.has(f));
