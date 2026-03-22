@@ -9377,7 +9377,15 @@ function qaSave() {
     // Edit mode — replace existing entry
     const oldMonthKey = qaEditMonthKey;
     const oldType = typeMap[qaEditType];
-    data[oldMonthKey][oldType].splice(qaEditIdx, 1);
+    // Bug fix: validate index exists before splice — guards against concurrent delete
+    const editList = data[oldMonthKey] && data[oldMonthKey][oldType];
+    if (!editList || qaEditIdx >= editList.length) {
+      console.warn('[KashRA] Edit index out of range — entry may have been deleted');
+      showToast('⚠️ Could not find original transaction — saving as new entry');
+      qaEditMode = false; qaEditMonthKey = null; qaEditType = null; qaEditIdx = null;
+    } else {
+      editList.splice(qaEditIdx, 1);
+    }
     ensureMonth(monthKey);
     data[monthKey][typeMap[qaType]].push(entry);
     qaEditMode = false; qaEditMonthKey = null; qaEditType = null; qaEditIdx = null;
@@ -17638,16 +17646,20 @@ const NSE_SYMBOL_SECTOR = {
 };
 
 function _resolveSector(symbol, rawSector) {
+  const sym = (symbol || '').toUpperCase().trim().replace(/^(NSE:|BSE:)/, '');
+  // Bug fix: guard against null/undefined data._equitySectorOverrides
+  // 0. User override takes highest priority
+  const overrides = (typeof data !== 'undefined' && data._equitySectorOverrides) || {};
+  if (sym && overrides[sym]) return overrides[sym];
   // 1. If sector already known and not OTHERS → normalise and return
   if (rawSector && rawSector.toUpperCase() !== 'OTHERS' && rawSector.trim() !== '') {
     const upper = rawSector.toUpperCase().trim();
     return SECTOR_NORMALISE[upper] || upper;
   }
-  // 2. Symbol lookup
-  const sym = (symbol || '').toUpperCase().trim().replace(/^(NSE:|BSE:)/, '');
-  if (NSE_SYMBOL_SECTOR[sym]) return NSE_SYMBOL_SECTOR[sym];
+  // 2. US/NSE symbol dictionary lookup
+  if (sym && NSE_SYMBOL_SECTOR[sym]) return NSE_SYMBOL_SECTOR[sym];
   // 3. Pattern-based ETF detection
-  if (/BEES$|BEES-[A-Z]$|ETF$|INDEX|CASE$|INDA$/.test(sym)) return 'ETF';
+  if (sym && /BEES$|BEES-[A-Z]$|ETF$|INDEX|CASE$|INDA$/.test(sym)) return 'ETF';
   return 'OTHERS';
 }
 
@@ -21557,6 +21569,13 @@ function saveGoal() {
 
 function deleteGoal(id) { trackFeature('delete_goal');
   if (!confirm('Delete this goal?')) return;
+  // Validate goal exists before delete
+  const goal = getGoals().find(g => g.id === id);
+  if (!goal) { showToast('Goal not found'); return; }
+  // Bug fix: clean up orphaned recurring rules linked to this goal
+  if (data._recurring) {
+    data._recurring = data._recurring.filter(r => r._goalId !== id && r._linkedGoalId !== id);
+  }
   data._goals = getGoals().filter(g => g.id !== id);
   save();
   renderGoalsPanel();
@@ -21947,26 +21966,19 @@ function getBudgetActual(goal, monthKey) {
   const cats = (goal.linkedCats || [goal.key]).map(c => c.toLowerCase().trim());
   const fm = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
   let total = 0;
+  // Bug fix: normalize ALL strings to lowercase for case-insensitive matching
+  // 'Breakfast' vs 'fastfood' — cats already lowercased, ec/eit/esc also lowercased
+  const matchesCat = (e) => {
+    const ec  = (e.category    || '').toLowerCase().trim();
+    const eit = (e.investType  || '').toLowerCase().trim();
+    const esc = (e.subCategory || '').toLowerCase().trim();
+    return cats.some(c => ec === c || eit === c || esc === c ||
+      // Also check partial match for common aliases (e.g. 'fast food' matches 'fastfood')
+      ec.replace(/\s+/g,'') === c.replace(/\s+/g,''));
+  };
   ['expenses', 'investments', 'additional'].forEach(listKey => {
-    // Own transactions
-    (m[listKey] || []).forEach(e => {
-      const ec  = (e.category   || '').toLowerCase().trim();
-      const eit = (e.investType || '').toLowerCase().trim(); // G: also check investType
-      const esc = (e.subCategory|| '').toLowerCase().trim();
-      // Match on category OR investType OR subCategory
-      if (cats.some(c => ec === c || eit === c || esc === c)) {
-        total += convertAmt(e.amount, e.currency);
-      }
-    });
-    // Family transactions — included in budget tracking
-    (fm[listKey] || []).forEach(e => {
-      const ec  = (e.category   || '').toLowerCase().trim();
-      const eit = (e.investType || '').toLowerCase().trim();
-      const esc = (e.subCategory|| '').toLowerCase().trim();
-      if (cats.some(c => ec === c || eit === c || esc === c)) {
-        total += convertAmt(e.amount, e.currency);
-      }
-    });
+    (m[listKey]  || []).forEach(e => { if (matchesCat(e)) total += convertAmt(e.amount, e.currency); });
+    (fm[listKey] || []).forEach(e => { if (matchesCat(e)) total += convertAmt(e.amount, e.currency); });
   });
   return total;
 }
@@ -36996,6 +37008,11 @@ function _buildContextForQuestion(question) {
   );
 
   // If clearly topic-specific (1-2 topics), trim unrelated heavy sections
+  // Bug fix: if no topics matched (detection failed), return full context as fallback
+  if (matched.size === 0) {
+    console.log('[KashRA] Context slicer: no topic detected — returning full context');
+    return ctx;
+  }
   if (matched.size >= 1 && matched.size <= 2) {
     let sliced = ctx;
 
@@ -39225,16 +39242,22 @@ function mfTokenValid() {
 // ── Silent token refresh — called proactively before expiry ───────
 let _mfTokenRefreshTimer = null;
 function mfScheduleTokenRefresh() {
-  if (_mfTokenRefreshTimer) clearTimeout(_mfTokenRefreshTimer);
+  // Bug fix: always clear existing timer before scheduling new one — prevents orphaned timers
+  if (_mfTokenRefreshTimer) {
+    clearTimeout(_mfTokenRefreshTimer);
+    _mfTokenRefreshTimer = null;
+  }
   if (!window._driveTokenExpiry) return;
-  // Refresh 5 minutes before expiry
-  const msUntilRefresh = window._driveTokenExpiry - Date.now() - (5 * 60 * 1000);
+  // Refresh 8 minutes before expiry (increased from 5 for high-latency networks)
+  const msUntilRefresh = window._driveTokenExpiry - Date.now() - (8 * 60 * 1000);
   if (msUntilRefresh <= 0) {
-    // Already expired or about to — refresh now
     mfSilentTokenRefresh();
     return;
   }
-  _mfTokenRefreshTimer = setTimeout(mfSilentTokenRefresh, msUntilRefresh);
+  _mfTokenRefreshTimer = setTimeout(() => {
+    _mfTokenRefreshTimer = null; // clear ref after firing
+    mfSilentTokenRefresh();
+  }, msUntilRefresh);
   console.log('[KashRA] Token refresh scheduled in', Math.round(msUntilRefresh/60000), 'min');
 }
 
