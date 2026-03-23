@@ -2442,13 +2442,15 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
   ═══════════════════════════════════════════════════ */
   #disc-edge-hint {
     position: fixed; left: 0; top: 50%; transform: translateY(-50%);
-    width: 5px; height: 72px;
+    width: 6px; height: 88px;
     background: linear-gradient(180deg, transparent, var(--yellow), transparent);
-    border-radius: 0 4px 4px 0; z-index: 90; opacity: 0; pointer-events: none;
-    animation: discEdgePulse 2.8s ease-in-out infinite; transition: opacity 0.5s;
+    border-radius: 0 6px 6px 0; z-index: 90; opacity: 0; pointer-events: none;
+    animation: discEdgePulse 2.4s ease-in-out infinite; transition: opacity 0.5s;
+    /* Wider tap target than visual — 44px touch area on left edge */
+    padding-right: 38px;
   }
   #disc-edge-hint.visible { opacity: 1; pointer-events: auto; cursor: pointer; }
-  @keyframes discEdgePulse { 0%,100%{opacity:.25;width:5px} 50%{opacity:1;width:7px} }
+  @keyframes discEdgePulse { 0%,100%{opacity:.3;width:6px} 50%{opacity:1;width:10px} }
   #disc-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 110; display: none; transition: background 0.35s;
   }
@@ -37572,7 +37574,7 @@ function closeAIAdvisor(e) {
 ═══════════════════════════════════════════════════════ -->
 
 <!-- Edge hint strip -->
-<div id="disc-edge-hint"></div>
+<div id="disc-edge-hint" onclick="discOpen()"></div>
 
 <!-- Backdrop -->
 <div id="disc-backdrop" onclick="discClose()"></div>
@@ -38778,9 +38780,11 @@ function _discIsHidden() {
 // Expose reset for console recovery
 window._discReset = function() {
   if (typeof data !== 'undefined') { data._discoveryHidden = false; save(); }
+  _discUpdateEdgeHint();
+  // Force hint visible immediately regardless of screen
   const hint = document.getElementById('disc-edge-hint');
   if (hint) hint.classList.add('visible');
-  showToast('✨ Discovery Map re-enabled — swipe from left edge', 3000);
+  showToast('Discovery map re-enabled — swipe from left edge', 3000);
 };
 
 // ── Core public: trackFeature(id) — call this from every onclick ──
@@ -39057,7 +39061,8 @@ let _discTouchStartX = 0, _discTouchStartY = 0, _discTouchActive = false;
 document.addEventListener('touchstart', e=>{
   _discTouchStartX = e.touches[0].clientX;
   _discTouchStartY = e.touches[0].clientY;
-  _discTouchActive = _discTouchStartX < 28;
+  // 44px zone — wide enough for thumb, avoids iOS back-swipe conflict (iOS uses ~20px)
+  _discTouchActive = _discTouchStartX < 44;
 }, {passive:true});
 
 document.addEventListener('touchend', e=>{
@@ -39065,7 +39070,8 @@ document.addEventListener('touchend', e=>{
   _discTouchActive = false;
   const dx = e.changedTouches[0].clientX - _discTouchStartX;
   const dy = Math.abs(e.changedTouches[0].clientY - _discTouchStartY);
-  if (dx > 52 && dy < 60 && !_discPanelOpen && !_discIsHidden()) discOpen();
+  // Lower threshold: 36px swipe (was 52) — easier to trigger
+  if (dx > 36 && dy < 80 && !_discPanelOpen && !_discIsHidden()) discOpen();
 }, {passive:true});
 
 // ── Hook into switchScreen to update edge hint ──
