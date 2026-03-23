@@ -11660,7 +11660,7 @@ async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, p
 
   try {
     const enc = await mfFamilyEncrypt(sensitiveData, keyBytes);
-    await firebase.firestore().collection(MF_FS_CMD_COLLECTION).add({
+    await firebase.firestore().collection('mf_family_cmds').add({
       familyId:  meta.familyId,  // plain — needed for query
       targetUid,                 // plain — needed for query
       issuedBy:  meta.myUid || meta.familyId + '_owner',
@@ -11685,7 +11685,7 @@ async function mfProcessPendingCommands() {
 
   let snap;
   try {
-    snap = await firebase.firestore().collection(MF_FS_CMD_COLLECTION)
+    snap = await firebase.firestore().collection('mf_family_cmds')
       .where('familyId', '==', meta.familyId)
       .where('targetUid', '==', myUid)
       .where('status', '==', 'pending')
