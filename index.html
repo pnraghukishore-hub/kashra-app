@@ -6684,6 +6684,11 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
 <datalist id="catlist"></datalist>
 
 <script>
+// ── Global debug flag — set false before public launch ──
+window.KASHRA_DEBUG = false; // ← flip to true for dev logging
+const _log  = (...a) => window.KASHRA_DEBUG && console.log(...a);
+const _warn = (...a) => window.KASHRA_DEBUG && console.warn(...a);
+
 // ── Discovery Map: safe stub — real impl in Script 3 ──
 window.trackFeature = window.trackFeature || function(id) {
   // Queue until Script 3 loads
@@ -9394,7 +9399,7 @@ function qaSave() {
     // Bug fix: validate index exists before splice — guards against concurrent delete
     const editList = data[oldMonthKey] && data[oldMonthKey][oldType];
     if (!editList || qaEditIdx >= editList.length) {
-      console.warn('[KashRA] Edit index out of range — entry may have been deleted');
+      _warn('[KashRA] Edit index out of range — entry may have been deleted');
       showToast('⚠️ Could not find original transaction — saving as new entry');
       qaEditMode = false; qaEditMonthKey = null; qaEditType = null; qaEditIdx = null;
     } else {
@@ -11625,7 +11630,7 @@ async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, p
   const meta = mfGetFamilyMeta();
   if (!meta || meta.role !== 'owner') return;
   const keyBytes = mfGetFamilyKeyBytes();
-  if (!keyBytes) { console.warn('[MF Cmd] No family key — cannot encrypt command'); return; }
+  if (!keyBytes) { _warn('[MF Cmd] No family key — cannot encrypt command'); return; }
 
   // Sensitive command data — encrypt before Firestore
   const sensitiveData = {
@@ -11647,9 +11652,9 @@ async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, p
       status:    'pending',
       enc,                       // AES-256 encrypted command payload
     });
-    console.log('[MF Cmd] Issued (encrypted)', command, 'for', targetUid);
+    _log('[MF Cmd] Issued (encrypted)', command, 'for', targetUid);
   } catch(e) {
-    console.warn('[MF Cmd] Issue failed:', e.message);
+    _warn('[MF Cmd] Issue failed:', e.message);
     showToast('⚠️ Command queued — will sync when online', 2500);
   }
 }
@@ -11657,6 +11662,7 @@ async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, p
 // Called by each member on app open / visibilitychange — drains pending commands
 // before Drive sync so changes propagate to member's source of truth
 async function mfProcessPendingCommands() {
+  if (typeof mfGetDb !== 'function') return; // family module not yet loaded
   const meta = mfGetFamilyMeta();
   if (!meta) return;
   const myUid = meta.myUid || (meta.role === 'owner' ? meta.familyId + '_owner' : null);
@@ -11670,15 +11676,15 @@ async function mfProcessPendingCommands() {
       .where('status', '==', 'pending')
       .get();
   } catch(e) {
-    console.warn('[MF Cmd] Query failed:', e.message);
+    _warn('[MF Cmd] Query failed:', e.message);
     return;
   }
 
   if (snap.empty) return;
-  console.log('[MF Cmd] Processing', snap.size, 'pending commands');
+  _log('[MF Cmd] Processing', snap.size, 'pending commands');
 
   const keyBytes = mfGetFamilyKeyBytes();
-  if (!keyBytes) { console.warn('[MF Cmd] No family key — cannot decrypt commands'); return; }
+  if (!keyBytes) { _warn('[MF Cmd] No family key — cannot decrypt commands'); return; }
 
   let anyChange = false;
   const appliedMonths = new Set();
@@ -11693,7 +11699,7 @@ async function mfProcessPendingCommands() {
       try {
         cmd = await mfFamilyDecrypt(raw.enc, keyBytes);
       } catch(e) {
-        console.warn('[MF Cmd] Decrypt failed:', e.message, '— skipping');
+        _warn('[MF Cmd] Decrypt failed:', e.message, '— skipping');
         await cmdDoc.ref.update({status:'skipped_decrypt_failed'});
         continue;
       }
@@ -11724,14 +11730,14 @@ async function mfProcessPendingCommands() {
       list.splice(txIdx, 1);
       anyChange = true;
       appliedMonths.add(mk);
-      console.log('[MF Cmd] Deleted:', cmd.fingerprint, 'from', mk);
+      _log('[MF Cmd] Deleted:', cmd.fingerprint, 'from', mk);
     } else if (cmd.command === 'edit' && cmd.payload) {
       const original = list[txIdx];
       list[txIdx] = { ...cmd.payload, _addedBy: original._addedBy,
         _editedBy: cmd.issuedByName || 'Owner', _editedAt: new Date().toISOString() };
       anyChange = true;
       appliedMonths.add(mk);
-      console.log('[MF Cmd] Edited:', cmd.fingerprint, 'in', mk);
+      _log('[MF Cmd] Edited:', cmd.fingerprint, 'in', mk);
     }
 
     await cmdDoc.ref.update({status:'applied',
@@ -14775,7 +14781,7 @@ function generateClarityPDF() {
         doc.autoTable(opts);
         y = (doc.lastAutoTable?.finalY || y) + 6;
       } catch(atErr) {
-        console.warn('[MoneyFi] autoTable render error (using manual fallback):', atErr.message);
+        _warn('[MoneyFi] autoTable render error (using manual fallback):', atErr.message);
         const headers = opts.head?.[0] || [];
         const rows = opts.body || [];
         const colW2 = (W-2*M)/Math.max(headers.length,1);
@@ -15817,7 +15823,7 @@ if(d.goalMismatchPenalty>0){
     try {
       rawBytes = doc.output('arraybuffer');
     } catch(e) {
-      console.warn('[MoneyFi] doc.output error:', e);
+      _warn('[MoneyFi] doc.output error:', e);
       showToast('⚠️ PDF build error — saved without password.', 4000);
       doc.save(filename); return;
     }
@@ -15831,7 +15837,7 @@ if(d.goalMismatchPenalty>0){
       setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
       showToast('✅ PDF encrypted — open in Acrobat or Chrome, enter your password.', 5000);
     } catch(encErr) {
-      console.warn('[MoneyFi] PDF encryption error:', encErr);
+      _warn('[MoneyFi] PDF encryption error:', encErr);
       doc.save(filename);
       showToast('⚠️ Encryption failed (' + encErr.message + ') — saved without password.', 4000);
     }
@@ -28857,7 +28863,7 @@ function _visionResetQuota() {
   localStorage.removeItem(_visionGetQuotaKey());
   _visionUpdateQuotaBar();
   showToast('🔄 AI Scan quota reset — 25 scans available');
-  console.log('[MoneyFi] Vision quota reset for', _visionGetQuotaKey());
+  _log('[MoneyFi] Vision quota reset for', _visionGetQuotaKey());
 }
 
 function _visionGetQuotaKey() {
@@ -31297,7 +31303,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   // Check for pending owner commands when app comes to foreground
   if (typeof mfProcessPendingCommands === 'function' && typeof mfGetFamilyMeta === 'function' && mfGetFamilyMeta()) {
-    mfProcessPendingCommands().catch(e => console.warn('[MF Cmd] vis:', e.message));
+    mfProcessPendingCommands().catch(e => _warn('[MF Cmd] vis:', e.message));
   }
   const bar = document.getElementById('sync-status-bar');
   if (!bar || bar.style.display === 'none') return;
@@ -31343,7 +31349,7 @@ async function firebaseLoad(uid) {
       showSyncStatus('✅ Using local data', '#10B981', 2000);
     }
   } catch(e) {
-    console.warn('[KashRA] Drive load on sign-in failed:', e.message);
+    _warn('[KashRA] Drive load on sign-in failed:', e.message);
     showSyncStatus('✅ Using local data', '#10B981', 2000);
   }
 
@@ -31369,13 +31375,13 @@ function startRealtimeSync(uid) {
   // Personal data real-time sync removed — Drive is the source of truth
   // Cross-device sync: open app → Drive restore loads latest data
   // Family data (txns, NW, manifest) still syncs via mfStartFamilyTxnsListener()
-  console.log('[KashRA] Personal Firestore sync disabled — Drive is source of truth');
+  _log('[KashRA] Personal Firestore sync disabled — Drive is source of truth');
 }
 
 // ── Auth state handler ────────────────────────────────────────────────────
 function signInWithGoogle() {
   // _auth may not be bound yet if called very early — re-resolve
-  if (typeof _auth === 'undefined') { console.warn('[MoneyFi] Auth not ready yet'); return; }
+  if (typeof _auth === 'undefined') { _warn('[MoneyFi] Auth not ready yet'); return; }
   const btn = document.getElementById('google-signin-btn');
   const statusEl = document.getElementById('login-status');
   if (btn) btn.disabled = true;
@@ -35804,8 +35810,8 @@ function scoreNWTrajectory(nw, profile) {
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./service-worker.js')
-          .then(reg => console.log('[MoneyFi] SW registered:', reg.scope))
-          .catch(err => console.warn('[MoneyFi] SW failed:', err));
+          .then(reg => _log('[MoneyFi] SW registered:', reg.scope))
+          .catch(err => _warn('[MoneyFi] SW failed:', err));
       });
     }
   </script>
@@ -37141,7 +37147,7 @@ function _buildContextForQuestion(question) {
   // If clearly topic-specific (1-2 topics), trim unrelated heavy sections
   // Bug fix: if no topics matched (detection failed), return full context as fallback
   if (matched.size === 0) {
-    console.log('[KashRA] Context slicer: no topic detected — returning full context');
+    _log('[KashRA] Context slicer: no topic detected — returning full context');
     return ctx;
   }
   if (matched.size >= 1 && matched.size <= 2) {
@@ -39503,7 +39509,7 @@ function mfScheduleTokenRefresh() {
     _mfTokenRefreshTimer = null; // clear ref after firing
     mfSilentTokenRefresh();
   }, msUntilRefresh);
-  console.log('[KashRA] Token refresh scheduled in', Math.round(msUntilRefresh/60000), 'min');
+  _log('[KashRA] Token refresh scheduled in', Math.round(msUntilRefresh/60000), 'min');
 }
 
 let _driveRetryTimer = null;
@@ -39512,12 +39518,12 @@ let _driveRetryCount = 0;
 function mfSilentTokenRefresh() {
   if (!_tokenClient) return;
   if (!window._fbUser) return;
-  console.log('[KashRA] Silently refreshing Drive token…');
+  _log('[KashRA] Silently refreshing Drive token…');
   try {
     _tokenClient.requestAccessToken({ prompt: '' });
     // On success the token callback fires → schedules next refresh + resets retry
   } catch(e) {
-    console.warn('[KashRA] Silent token refresh failed:', e.message);
+    _warn('[KashRA] Silent token refresh failed:', e.message);
     mfDriveRetryConnect();
   }
 }
@@ -39526,14 +39532,14 @@ function mfSilentTokenRefresh() {
 function mfDriveRetryConnect() {
   if (_driveRetryTimer) return; // already retrying
   if (_driveRetryCount >= 5) {
-    console.warn('[KashRA] Drive retry limit reached — showing reconnect prompt');
+    _warn('[KashRA] Drive retry limit reached — showing reconnect prompt');
     mfSetDriveStatus('disconnected', 'Tap to reconnect');
     _driveRetryCount = 0;
     return;
   }
   const delayMs = Math.min(30000, 3000 * Math.pow(2, _driveRetryCount)); // 3s, 6s, 12s, 24s, 30s
   _driveRetryCount++;
-  console.log('[KashRA] Drive retry', _driveRetryCount, 'in', delayMs/1000, 's');
+  _log('[KashRA] Drive retry', _driveRetryCount, 'in', delayMs/1000, 's');
   _driveRetryTimer = setTimeout(() => {
     _driveRetryTimer = null;
     mfSilentTokenRefresh();
@@ -39542,7 +39548,7 @@ function mfDriveRetryConnect() {
 
 // Called when Drive save/read fails with 401 — trigger retry
 function mfDriveHandleAuthError() {
-  console.warn('[KashRA] Drive auth error — scheduling reconnect');
+  _warn('[KashRA] Drive auth error — scheduling reconnect');
   mfSetDriveStatus('disconnected', 'Reconnecting…');
   window._driveToken = null;
   window._driveTokenExpiry = null;
@@ -39760,7 +39766,7 @@ async function mfDriveMergeAndSave(localEnvelope) {
 window.mfDriveSaveNow = async function() {
   // Auto-refresh token if expired
   if (window._driveToken && !mfTokenValid()) {
-    console.log('[KashRA] Token expired before save — refreshing');
+    _log('[KashRA] Token expired before save — refreshing');
     mfSilentTokenRefresh();
     await new Promise(r => setTimeout(r, 2000)); // wait for refresh
   }
@@ -39775,7 +39781,7 @@ window.mfDriveSaveNow = async function() {
     return (m.expenses||[]).length > 0 || (m.income||[]).length > 0 || (m.investments||[]).length > 0;
   }) || (dataObj._nwAccounts||[]).length > 0;
   if (!hasAnyData) {
-    console.warn('[KashRA Drive] Backup skipped — data appears empty, refusing to overwrite Drive');
+    _warn('[KashRA Drive] Backup skipped — data appears empty, refusing to overwrite Drive');
     showSyncStatus('⚠️ Backup skipped — restore your data first', '#F59E0B', 4000);
     return;
   }
@@ -39960,7 +39966,7 @@ function mfOnBackupFail(err) {
     // Add retry button to Drive status card
     mfShowBackupRetryUI();
   }
-  console.warn('[KashRA Drive] Backup failed (attempt', fails, '):', err?.message);
+  _warn('[KashRA Drive] Backup failed (attempt', fails, '):', err?.message);
 }
 
 function mfShowBackupRetryUI() {
@@ -40120,7 +40126,7 @@ async function mfDriveInitWithUID() {
     const stored = await mfLoadStoredPassphrase();
     if (stored) {
       window._mfEncPassphrase = stored;
-      console.log('[MF Drive] Auto-unlocked silently');
+      _log('[MF Drive] Auto-unlocked silently');
       mfInitTokenClient();
 
       // Try silent connect — works on desktop Chrome (same Google account)
@@ -40362,10 +40368,10 @@ async function mfDriveReadFamilyFile(folderId, fileName) {
 async function mfReadSharedFolderFile(folderId, fileName) {
   const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-  console.log('[MF Family] Searching for file:', fileName, 'in folder:', folderId);
+  _log('[MF Family] Searching for file:', fileName, 'in folder:', folderId);
   const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + window._driveToken } });
   const json = await resp.json();
-  console.log('[MF Family] Search result:', JSON.stringify(json).slice(0,200));
+  _log('[MF Family] Search result:', JSON.stringify(json).slice(0,200));
   const fileId = (json.files || [])[0]?.id;
   if (!fileId) return null;
   const fileResp = await fetch(
@@ -40412,7 +40418,7 @@ async function mfWriteSharedFolderFile(folderId, fileName, b64Content) {
 
 // Read manifest directly by file ID using public URL (no auth needed — file is set to public)
 async function mfReadManifestById(fileId, keyBytes) {
-  console.log('[MF Family] Reading manifest by fileId (public URL):', fileId);
+  _log('[MF Family] Reading manifest by fileId (public URL):', fileId);
   // Use Drive's export/download URL which works for publicly shared files
   const publicUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   try {
@@ -40488,7 +40494,7 @@ async function mfWriteManifest(folderId, keyBytes, manifest) {
     enc: b64,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   });
-  console.log('[MF Family] Manifest written to Firestore for familyId:', familyId);
+  _log('[MF Family] Manifest written to Firestore for familyId:', familyId);
   return familyId; // return familyId as the "file ID" equivalent
 }
 
@@ -40636,21 +40642,21 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
-  console.log('[MF Family] Joining familyId:', payload.familyId);
+  _log('[MF Family] Joining familyId:', payload.familyId);
 
   try {
     // Read manifest from Firestore using familyId — works cross-account
     let manifest = null;
     try {
       manifest = await mfReadManifestForFamily(payload.familyId, keyBytes);
-      console.log('[MF Family] Manifest from Firestore:', manifest ? 'OK members='+manifest.members?.length : 'null');
+      _log('[MF Family] Manifest from Firestore:', manifest ? 'OK members='+manifest.members?.length : 'null');
     } catch(e) {
-      console.warn('[MF Family] Firestore read failed:', e.message);
+      _warn('[MF Family] Firestore read failed:', e.message);
     }
 
     // If Firestore read failed (e.g. not yet signed in to Firebase), use a fresh manifest
     if (!manifest) {
-      console.log('[MF Family] Creating fresh manifest for join');
+      _log('[MF Family] Creating fresh manifest for join');
       manifest = {
         familyId: payload.familyId,
         ownerName: payload.ownerName,
@@ -40685,9 +40691,9 @@ window.mfFamilyJoin = async function() {
     // Write updated manifest to Firestore — works cross-account, member has own Firebase auth
     try {
       await mfWriteManifestForFamily(payload.familyId, keyBytes, manifest);
-      console.log('[MF Family] Manifest written to Firestore — owner will see member on next open');
+      _log('[MF Family] Manifest written to Firestore — owner will see member on next open');
     } catch(e) {
-      console.warn('[MF Family] Firestore write failed:', e.message);
+      _warn('[MF Family] Firestore write failed:', e.message);
       showToast('⚠️ Joined locally — owner needs to be online to sync roster', 3000);
     }
 
@@ -40714,9 +40720,9 @@ window.mfFamilyJoin = async function() {
       showToast('✅ Family history loaded', 2000);
       try { renderHome(); } catch(e) {}
       try { renderTransactions && renderTransactions(); } catch(e) {}
-      console.log('[MF Family] New member loaded history for', monthsToLoad.length, 'months');
+      _log('[MF Family] New member loaded history for', monthsToLoad.length, 'months');
     } catch(e) {
-      console.warn('[MF Family] History load failed:', e.message);
+      _warn('[MF Family] History load failed:', e.message);
     }
 
   } catch(e) {
@@ -40763,7 +40769,7 @@ window.mfFamilyRemoveMember = async function(uid, name) {
       })
     );
     await Promise.all(rekeyPromises);
-    console.log('[MF Family] New key delivered to', remaining.length, 'remaining members');
+    _log('[MF Family] New key delivered to', remaining.length, 'remaining members');
 
     // 6. Clean up departed member docs
     try {
@@ -40943,7 +40949,7 @@ window.renderFamilyDashCard = async function() {
 
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
-  console.log('[MF Family] renderFamilyDashCard — meta:', meta?.familyId, 'hasKey:', !!keyBytes);
+  _log('[MF Family] renderFamilyDashCard — meta:', meta?.familyId, 'hasKey:', !!keyBytes);
 
   // Hide card if not in a family
   if (!meta || !keyBytes) {
@@ -41084,7 +41090,7 @@ async function mfSyncFamilyTxns(monthKey) {
   // The 5s debounce means data[] may have changed; capture the current state explicitly
   const mData = (typeof data !== 'undefined' && data[monthKey]) ? data[monthKey] : null;
   if (!mData) {
-    console.warn('[MF Family] No data for', monthKey, '— skipping sync');
+    _warn('[MF Family] No data for', monthKey, '— skipping sync');
     return;
   }
 
@@ -41119,7 +41125,7 @@ async function mfSyncFamilyTxns(monthKey) {
       enc,                       // AES-256-GCM encrypted blob — Firestore sees nothing else
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    console.log('[MF Family] Txns synced (encrypted) for', monthKey,
+    _log('[MF Family] Txns synced (encrypted) for', monthKey,
       '— exp:', txnData.expenses.length, 'inc:', txnData.income.length);
   } catch(e) {
     console.error('[MF Family] Txn sync FAILED for', monthKey, ':', e.message);
@@ -41144,7 +41150,7 @@ async function mfLoadFamilyTxns(monthKey) {
 
   // Guard: if we still don't know our own uid, bail — better to show nothing than doubles
   if (!myUid) {
-    console.warn('[MF Family] Cannot load txns — myUid unknown, skipping');
+    _warn('[MF Family] Cannot load txns — myUid unknown, skipping');
     return;
   }
 
@@ -41174,13 +41180,30 @@ async function mfLoadFamilyTxns(monthKey) {
         try {
           txnData = await mfFamilyDecrypt(d.enc, keyBytes);
         } catch(e) {
-          console.warn('[MF Family] Decrypt failed for uid', d.uid, '— wrong key or corrupted:', e.message);
+          _warn('[MF Family] Decrypt failed for uid', d.uid, '— wrong key or corrupted:', e.message);
           continue; // skip undecryptable doc
         }
       } else if (d.expenses) {
-        // Legacy plain-text doc — accept but log warning
-        console.warn('[MF Family] Plain-text doc found for uid', d.uid, '— member needs to re-sync');
+        // Legacy plain-text doc — accept data and auto-migrate to encrypted format
+        _warn('[MF Family] Plain-text doc found for uid', d.uid, '— auto-migrating');
         txnData = d;
+        // Auto-migrate: re-encrypt and overwrite the plain-text doc
+        if (keyBytes && meta.role === 'owner') {
+          try {
+            const encPayload = await mfFamilyEncrypt({
+              expenses: d.expenses || [], income: d.income || [],
+              investments: d.investments || [], additional: d.additional || [],
+              memberName: d.memberName, uid: d.uid, month: d.month,
+              updatedAt: Date.now()
+            }, keyBytes);
+            await mfGetDb().collection(MF_FS_TXNS_COLLECTION).doc(doc.id).set({
+              familyId: d.familyId, uid: d.uid, memberName: d.memberName,
+              month: d.month, enc: encPayload,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            _log('[MF Family] Auto-migrated plain-text doc for uid', d.uid, 'month', d.month);
+          } catch(me) { _warn('[MF Family] Migration failed:', me.message); }
+        }
       } else {
         continue;
       }
@@ -41209,10 +41232,10 @@ async function mfLoadFamilyTxns(monthKey) {
       });
     });
     window._mfFamilyTxns[monthKey] = merged;
-    console.log('[MF Family] Loaded + decrypted txns for', monthKey,
+    _log('[MF Family] Loaded + decrypted txns for', monthKey,
       '— exp:', merged.expenses.length, 'inc:', merged.income.length);
   } catch(e) {
-    console.warn('[MF Family] Load txns failed:', e.message);
+    _warn('[MF Family] Load txns failed:', e.message);
     window._mfFamilyTxns[monthKey] = null;
   } finally {
     window[lockKey] = false;
@@ -41261,9 +41284,9 @@ function mfStartFamilyTxnsListener() {
         await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
         try { renderHome(); } catch(e) {}
         try { renderTransactions && renderTransactions(); } catch(e) {}
-        console.log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
+        _log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
       }
-    }, err => console.warn('[MF Family] Txns listener error:', err.message));
+    }, err => _warn('[MF Family] Txns listener error:', err.message));
 
   // Explicit initial load — correctly skips own uid
   mfLoadFamilyTxns(viewMonth).then(() => {
@@ -41305,9 +41328,9 @@ async function mfSyncMemberNW() {
       familyId: meta.familyId,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    console.log('[MF Family] NW sync pushed:', visibleAccounts.length, 'visible accounts');
+    _log('[MF Family] NW sync pushed:', visibleAccounts.length, 'visible accounts');
   } catch(e) {
-    console.warn('[MF Family] NW sync failed:', e.message);
+    _warn('[MF Family] NW sync failed:', e.message);
   }
 }
 
@@ -41331,7 +41354,7 @@ async function mfReadAllMemberNW() {
     }
     return allAccounts;
   } catch(e) {
-    console.warn('[MF Family] Read member NW failed:', e.message);
+    _warn('[MF Family] Read member NW failed:', e.message);
     return [];
   }
 }
@@ -41587,7 +41610,7 @@ async function mfCheckRekey() {
     // Apply new key silently
     const newKeyBytes = Uint8Array.from(atob(newKeyB64), c => c.charCodeAt(0));
     mfSaveFamilyKey(newKeyBytes);
-    console.log('[MF Family] Silent re-key applied — new family key installed');
+    _log('[MF Family] Silent re-key applied — new family key installed');
 
     // Delete the rekey doc so it only applies once
     await mfGetDb()
@@ -41597,7 +41620,7 @@ async function mfCheckRekey() {
 
     showToast('🔐 Family security updated', 2000);
   } catch(e) {
-    console.warn('[MF Family] Re-key check failed:', e.message);
+    _warn('[MF Family] Re-key check failed:', e.message);
   }
 }
 
@@ -41612,7 +41635,7 @@ setTimeout(() => {
     const mk = (typeof viewMonth !== 'undefined') ? viewMonth : null;
     if (mk && typeof data !== 'undefined') {
       // Process pending owner commands first — so Drive gets updated before sync
-      try { await mfProcessPendingCommands(); } catch(e) { console.warn('[MF Cmd]',e.message); }
+      try { await mfProcessPendingCommands(); } catch(e) { _warn('[MF Cmd]',e.message); }
       mfSyncFamilyTxns(mk);
       mfStartFamilyTxnsListener();
       await mfLoadFamilyTxns(mk);
