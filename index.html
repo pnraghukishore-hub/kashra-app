@@ -11618,22 +11618,30 @@ function familyDeleteByKey(monthKey, type, fkey) {
 async function mfIssueCommand(targetUid, command, monthKey, type, fingerprint, payload) {
   const meta = mfGetFamilyMeta();
   if (!meta || meta.role !== 'owner') return;
-  const cmdDoc = {
-    familyId:     meta.familyId,
-    targetUid,
-    command,           // 'delete' | 'edit'
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!keyBytes) { console.warn('[MF Cmd] No family key — cannot encrypt command'); return; }
+
+  // Sensitive command data — encrypt before Firestore
+  const sensitiveData = {
+    command,
     monthKey,
     type,
-    fingerprint,       // "category|amount|date"
-    payload:      payload || null,
-    issuedBy:     meta.myUid || meta.familyId + '_owner',
+    fingerprint,   // "category|amount|date" — reveals financial info
+    payload:  payload || null,
     issuedByName: meta.ownerName,
-    issuedAt:     firebase.firestore.FieldValue.serverTimestamp(),
-    status:       'pending'
   };
+
   try {
-    await mfGetDb().collection(MF_FS_CMD_COLLECTION).add(cmdDoc);
-    console.log('[MF Cmd] Issued', command, 'for', targetUid, fingerprint);
+    const enc = await mfFamilyEncrypt(sensitiveData, keyBytes);
+    await mfGetDb().collection(MF_FS_CMD_COLLECTION).add({
+      familyId:  meta.familyId,  // plain — needed for query
+      targetUid,                 // plain — needed for query
+      issuedBy:  meta.myUid || meta.familyId + '_owner',
+      issuedAt:  firebase.firestore.FieldValue.serverTimestamp(),
+      status:    'pending',
+      enc,                       // AES-256 encrypted command payload
+    });
+    console.log('[MF Cmd] Issued (encrypted)', command, 'for', targetUid);
   } catch(e) {
     console.warn('[MF Cmd] Issue failed:', e.message);
     showToast('⚠️ Command queued — will sync when online', 2500);
@@ -11663,12 +11671,30 @@ async function mfProcessPendingCommands() {
   if (snap.empty) return;
   console.log('[MF Cmd] Processing', snap.size, 'pending commands');
 
+  const keyBytes = mfGetFamilyKeyBytes();
+  if (!keyBytes) { console.warn('[MF Cmd] No family key — cannot decrypt commands'); return; }
+
   let anyChange = false;
+  const appliedMonths = new Set();
   const typeMap = {expenses:'expenses', income:'income', investments:'investments',
                    additional:'additional', expense:'expenses', investment:'investments'};
 
   for (const cmdDoc of snap.docs) {
-    const cmd = cmdDoc.data();
+    const raw = cmdDoc.data();
+    // Decrypt command payload
+    let cmd;
+    if (raw.enc) {
+      try {
+        cmd = await mfFamilyDecrypt(raw.enc, keyBytes);
+      } catch(e) {
+        console.warn('[MF Cmd] Decrypt failed:', e.message, '— skipping');
+        await cmdDoc.ref.update({status:'skipped_decrypt_failed'});
+        continue;
+      }
+    } else {
+      // Legacy plain-text command (pre-encryption)
+      cmd = raw;
+    }
     const listKey = typeMap[cmd.type] || cmd.type;
     const mk = cmd.monthKey;
     if (!data[mk] || !data[mk][listKey]) {
@@ -11691,12 +11717,14 @@ async function mfProcessPendingCommands() {
     if (cmd.command === 'delete') {
       list.splice(txIdx, 1);
       anyChange = true;
+      appliedMonths.add(mk);
       console.log('[MF Cmd] Deleted:', cmd.fingerprint, 'from', mk);
     } else if (cmd.command === 'edit' && cmd.payload) {
       const original = list[txIdx];
       list[txIdx] = { ...cmd.payload, _addedBy: original._addedBy,
         _editedBy: cmd.issuedByName || 'Owner', _editedAt: new Date().toISOString() };
       anyChange = true;
+      appliedMonths.add(mk);
       console.log('[MF Cmd] Edited:', cmd.fingerprint, 'in', mk);
     }
 
@@ -11705,10 +11733,8 @@ async function mfProcessPendingCommands() {
   }
 
   if (anyChange) {
-    // Save to Drive → command is now permanent in member's source of truth
     save();
-    const changedMonths = [...new Set(snap.docs.map(d => d.data().monthKey))];
-    changedMonths.forEach(mk => { if (typeof mfTxnsAutoSync === 'function') mfTxnsAutoSync(mk); });
+    appliedMonths.forEach(mk => { if (typeof mfTxnsAutoSync === 'function') mfTxnsAutoSync(mk); });
     try { renderHome(); } catch(e) {}
     try { renderTransactions && renderTransactions(); } catch(e) {}
     showToast('🔄 Family ledger updated by owner', 2500);
@@ -41054,26 +41080,32 @@ async function mfSyncFamilyTxns(monthKey) {
 
   // Bug fix 3: Snapshot arrays at this moment to prevent race condition
   // during concurrent edits within the debounce window
-  const payload = {
-    familyId:    meta.familyId,
-    uid:         myUid,
+  // Financial data to encrypt — Firestore must never see plain transaction data
+  const txnData = {
     memberName,
-    displayName: (typeof firebase !== 'undefined' && firebase.auth().currentUser?.displayName) || '',
     month:       monthKey,
     expenses:    (mData.expenses    || []).map(t => ({...t})),
     income:      (mData.income      || []).map(t => ({...t})),
     investments: (mData.investments || []).map(t => ({...t})),
     additional:  (mData.additional  || []).map(t => ({...t})),
-    updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
   };
 
+  // Firestore document — only routing metadata in plain text, financial data encrypted
   try {
-    await firebase.firestore().collection(MF_FS_TXNS_COLLECTION).doc(docId).set(payload);
-    console.log('[MF Family] Txns synced for', monthKey,
-      '— exp:', payload.expenses.length, 'inc:', payload.income.length);
+    const keyBytes = mfGetFamilyKeyBytes();
+    if (!keyBytes) throw new Error('Family key not available');
+    const enc = await mfFamilyEncrypt(txnData, keyBytes);
+    await firebase.firestore().collection(MF_FS_TXNS_COLLECTION).doc(docId).set({
+      familyId:  meta.familyId,  // plain — needed for Firestore query index
+      uid:       myUid,          // plain — needed for dedup logic
+      month:     monthKey,       // plain — needed for Firestore query index
+      enc,                       // AES-256-GCM encrypted blob — Firestore sees nothing else
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('[MF Family] Txns synced (encrypted) for', monthKey,
+      '— exp:', txnData.expenses.length, 'inc:', txnData.income.length);
   } catch(e) {
     console.error('[MF Family] Txn sync FAILED for', monthKey, ':', e.message);
-    // Show non-blocking toast so user knows sync failed (they can retry by adding any txn)
     if (typeof showToast === 'function') showToast('⚠️ Family sync failed — will retry on next save', 3000);
   }
 }
@@ -41110,19 +41142,43 @@ async function mfLoadFamilyTxns(monthKey) {
       .where('month', '==', monthKey)
       .get();
 
-    // Deduplicate by uid — if same member has multiple docs (e.g. from rejoining),
-    // keep only the doc with the most transactions (most recent sync)
+    const keyBytes = mfGetFamilyKeyBytes();
+    if (!keyBytes) throw new Error('Family key not available for decryption');
+
+    // Decrypt each member's doc — deduplicate by uid (keep doc with most txns)
     const docsByUid = {};
-    snap.docs.forEach(doc => {
+    for (const doc of snap.docs) {
       const d = doc.data();
-      if (!d.uid || d.uid === myUid) return; // skip own
+      if (!d.uid || d.uid === myUid) continue; // skip own
+
+      let txnData;
+      if (d.enc) {
+        // New encrypted format
+        try {
+          txnData = await mfFamilyDecrypt(d.enc, keyBytes);
+        } catch(e) {
+          console.warn('[MF Family] Decrypt failed for uid', d.uid, '— wrong key or corrupted:', e.message);
+          continue; // skip undecryptable doc
+        }
+      } else if (d.expenses) {
+        // Legacy plain-text doc — accept but log warning
+        console.warn('[MF Family] Plain-text doc found for uid', d.uid, '— member needs to re-sync');
+        txnData = d;
+      } else {
+        continue;
+      }
+
+      // Attach routing metadata back onto decrypted payload
+      txnData.uid = d.uid;
+      txnData.memberName = txnData.memberName || d.memberName || 'Family';
+
       const existing = docsByUid[d.uid];
-      const newCount = (d.expenses||[]).length + (d.income||[]).length + (d.investments||[]).length;
+      const newCount = (txnData.expenses||[]).length + (txnData.income||[]).length + (txnData.investments||[]).length;
       const oldCount = existing
         ? (existing.expenses||[]).length + (existing.income||[]).length + (existing.investments||[]).length
         : -1;
-      if (!existing || newCount >= oldCount) docsByUid[d.uid] = d;
-    });
+      if (!existing || newCount >= oldCount) docsByUid[d.uid] = txnData;
+    }
 
     const merged = { expenses:[], income:[], investments:[], additional:[] };
     Object.values(docsByUid).forEach(d => {
@@ -41136,9 +41192,8 @@ async function mfLoadFamilyTxns(monthKey) {
       });
     });
     window._mfFamilyTxns[monthKey] = merged;
-    console.log('[MF Family] Loaded txns for', monthKey,
-      '— exp:', merged.expenses.length, 'inc:', merged.income.length,
-      '(skipped own uid:', myUid, ')');
+    console.log('[MF Family] Loaded + decrypted txns for', monthKey,
+      '— exp:', merged.expenses.length, 'inc:', merged.income.length);
   } catch(e) {
     console.warn('[MF Family] Load txns failed:', e.message);
     window._mfFamilyTxns[monthKey] = null;
