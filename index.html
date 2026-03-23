@@ -38586,6 +38586,33 @@ const DISC_THEMES = [
         }, 500); },
       spot:'[onclick*="acc-drive-backup"]', tip:'Status badge shows backup health — synced, failed, or offline.' },
 
+    { id:'drive_dot_disc',
+      label:'Green Dot — Backup Live',
+      nav:()=>{
+        const dot = document.getElementById('drive-status-dot');
+        if(dot){ dot.scrollIntoView({behavior:'smooth', block:'center'});
+          setTimeout(()=>_discSpotlight('#drive-status-dot',
+            'The small dot in the top-right is your backup heartbeat. 🟢 Green = your data is safely backed up. 🔵 Blue = backing up right now. 🔴 Red = something went wrong. ⚫ Grey = not connected yet.',
+            'Backup Dot'), 300);
+        }
+      },
+      spot:'#drive-status-dot', tip:'Green = backed up · Blue = saving · Red = error · Grey = offline.' },
+
+    { id:'family_dot_disc',
+      label:'Purple Dot — Family Connected',
+      nav:()=>{
+        const dot = document.getElementById('family-status-dot');
+        if(dot && dot.style.display !== 'none'){
+          dot.scrollIntoView({behavior:'smooth', block:'center'});
+          setTimeout(()=>_discSpotlight('#family-status-dot',
+            'The purple dot means your family group is active and syncing in real time. When it disappears, you are in solo mode — your data is still safe, just not shared.',
+            'Family Dot'), 300);
+        } else {
+          showToast('Join a family group to see the purple dot appear', 2500);
+        }
+      },
+      spot:'#family-status-dot', tip:'Purple = family sync active · No dot = solo mode.' },
+
   ]},
 
   { id:'family_shared', name:'Family & Shared Finances', emoji:'👨‍👩‍👧‍👦', color:'#3730A3', features:[
@@ -38593,30 +38620,48 @@ const DISC_THEMES = [
     { id:'family_create_disc',
       label:'Create Family Group',
       nav:()=>{ goToScreen('settings');
-        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
-          if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
-            setTimeout(()=>_discSpotlight(el,'Tap here to open Family & Shared Finances — create a private encrypted group where each member keeps their own data.','Create Family Group'), 500);
-          }
+        setTimeout(()=>{
+          // Open the family accordion reliably using toggleAccordion
+          const body = document.getElementById('acc-family-body');
+          if(body && body.style.display === 'none') toggleAccordion('acc-family');
+          setTimeout(()=>{
+            // Scroll to the family row header
+            const row = document.querySelector('[onclick*="acc-family"]');
+            if(row) row.scrollIntoView({behavior:'smooth', block:'center'});
+            // Spotlight the Create Family button inside the open panel
+            setTimeout(()=>{
+              const createBtn = document.querySelector('#family-panel-content button');
+              const target = createBtn || row;
+              if(target) _discSpotlight(target,'Tap Create Family Group to start a private shared ledger — your data stays on your device, and you only share what you choose.','Create Family Group');
+            }, 400);
+          }, 600);
         }, 500); },
-      spot:'[onclick*="acc-family"]', tip:'Create a private family group — share only what you choose.' },
+      spot:'#family-panel-content', tip:'Create a private family group — share only what you choose.' },
 
     { id:'family_invite_disc',
       label:'Invite Members',
       nav:()=>{ goToScreen('settings');
-        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
-          if(el){
-            // Open the accordion first
-            if(!el.getAttribute('data-open')) el.click();
-            // Wait for panel to expand, then find invite button
+        setTimeout(()=>{
+          // Ensure accordion is open
+          const body = document.getElementById('acc-family-body');
+          if(body && body.style.display === 'none') toggleAccordion('acc-family');
+          setTimeout(()=>{
+            // Scroll family section into view
+            const row = document.querySelector('[onclick*="acc-family"]');
+            if(row) row.scrollIntoView({behavior:'smooth', block:'center'});
             setTimeout(()=>{
-              const invBtn=document.querySelector('[onclick*="mfFamilyShowInvite"]');
-              if(invBtn){ invBtn.scrollIntoView({behavior:'smooth',block:'center'});
-                setTimeout(()=>_discSpotlight(invBtn,'Tap Invite Member to share a QR code or invite link. Expires in 24 hours for security.','Invite Members'), 300);
+              // Look for Invite Member button (only visible if user is owner of a family)
+              const invBtn = document.querySelector('[onclick*="mfFamilyShowInvite"]');
+              if(invBtn){
+                invBtn.scrollIntoView({behavior:'smooth', block:'center'});
+                setTimeout(()=>_discSpotlight(invBtn,'Tap here to invite a family member — generates a QR code or share link that expires in 24 hours.','Invite Member'), 300);
               } else {
-                // Panel open but no invite button = not owner or family not created yet
-                _discSpotlight(el,'Create or join a family group first — then the Invite Member button will appear here.','Invite Members');
+                // Not owner or no family yet — spotlight the panel itself
+                const panel = document.getElementById('family-panel-content');
+                if(panel) _discSpotlight(panel,'Create a family group first — once you are the owner, an Invite Member button will appear here.','Invite Members');
               }
-            }, 700); }
+            }, 300);
+          }, 700);
         }, 500); },
       spot:'[onclick*="mfFamilyShowInvite"]', tip:'Invite via QR code or link — expires in 24 hours for security.' },
 
