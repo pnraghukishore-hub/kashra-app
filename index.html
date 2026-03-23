@@ -38621,20 +38621,21 @@ const DISC_THEMES = [
       label:'Create Family Group',
       nav:()=>{ goToScreen('settings');
         setTimeout(()=>{
-          // Open the family accordion reliably using toggleAccordion
+          // Open the family accordion
           const body = document.getElementById('acc-family-body');
           if(body && body.style.display === 'none') toggleAccordion('acc-family');
+          // Wait for renderFamilyPanel() to populate the panel (it fires inside toggleAccordion)
           setTimeout(()=>{
-            // Scroll to the family row header
             const row = document.querySelector('[onclick*="acc-family"]');
             if(row) row.scrollIntoView({behavior:'smooth', block:'center'});
-            // Spotlight the Create Family button inside the open panel
             setTimeout(()=>{
+              // Try first button in panel (Create / Join), fall back to the row itself
               const createBtn = document.querySelector('#family-panel-content button');
-              const target = createBtn || row;
-              if(target) _discSpotlight(target,'Tap Create Family Group to start a private shared ledger — your data stays on your device, and you only share what you choose.','Create Family Group');
-            }, 400);
-          }, 600);
+              const panelContent = document.getElementById('family-panel-content');
+              const target = createBtn || panelContent || row;
+              if(target) _discSpotlight(target,'Tap Create Family Group to start a private shared ledger. Your data stays on your own device — you only share what you choose.','Create Family Group');
+            }, 500); // extra 500ms so renderFamilyPanel finishes
+          }, 800);
         }, 500); },
       spot:'#family-panel-content', tip:'Create a private family group — share only what you choose.' },
 
@@ -38646,48 +38647,54 @@ const DISC_THEMES = [
           const body = document.getElementById('acc-family-body');
           if(body && body.style.display === 'none') toggleAccordion('acc-family');
           setTimeout(()=>{
-            // Scroll family section into view
-            const row = document.querySelector('[onclick*="acc-family"]');
-            if(row) row.scrollIntoView({behavior:'smooth', block:'center'});
-            setTimeout(()=>{
-              // Look for Invite Member button (only visible if user is owner of a family)
-              const invBtn = document.querySelector('[onclick*="mfFamilyShowInvite"]');
-              if(invBtn){
-                invBtn.scrollIntoView({behavior:'smooth', block:'center'});
-                setTimeout(()=>_discSpotlight(invBtn,'Tap here to invite a family member — generates a QR code or share link that expires in 24 hours.','Invite Member'), 300);
-              } else {
-                // Not owner or no family yet — spotlight the panel itself
-                const panel = document.getElementById('family-panel-content');
-                if(panel) _discSpotlight(panel,'Create a family group first — once you are the owner, an Invite Member button will appear here.','Invite Members');
+            // Look for Invite Member button
+            const invBtn = document.querySelector('[onclick*="mfFamilyShowInvite"]');
+            if(invBtn){
+              // Scroll it into view, wait for scroll to settle, then spotlight
+              invBtn.scrollIntoView({behavior:'smooth', block:'center'});
+              setTimeout(()=>_discSpotlight(invBtn,'Tap here to invite a family member — you will get a QR code or share link. It expires in 24 hours for security.','Invite Member'), 600);
+            } else {
+              // Not owner or no family yet
+              const panel = document.getElementById('family-panel-content');
+              const target = panel || document.querySelector('[onclick*="acc-family"]');
+              if(target){
+                target.scrollIntoView({behavior:'smooth', block:'center'});
+                setTimeout(()=>_discSpotlight(target,'Create a family group first — once you are the owner, the green Invite Member button will appear here.','Invite Members'), 400);
               }
-            }, 300);
-          }, 700);
+            }
+          }, 900); // wait for accordion + renderFamilyPanel
         }, 500); },
       spot:'[onclick*="mfFamilyShowInvite"]', tip:'Invite via QR code or link — expires in 24 hours for security.' },
 
     { id:'family_dashboard_disc',
       label:'Family Dashboard Card',
       nav:()=>{
-        // Must be on Home screen — switch first
         goToScreen('home');
         setTimeout(()=>{
-          const card=document.getElementById('family-dash-card');
-          if(card && card.style.display!=='none'){
-            card.scrollIntoView({behavior:'smooth',block:'center'});
-            setTimeout(()=>_discSpotlight('#family-dash-card','This is the Family card — shows combined household spending, net worth, and per-member breakdown. Tap any member chip for their spotlight.','Family Dashboard'), 400);
+          const card = document.getElementById('family-dash-card');
+          const cardVisible = card && card.offsetParent !== null && card.style.display !== 'none';
+          if(cardVisible){
+            card.scrollIntoView({behavior:'smooth', block:'center'});
+            setTimeout(()=>_discSpotlight('#family-dash-card','This is the Family card — shows your household spending, combined net worth, and each member's contribution. Tap a member chip to zoom in on their activity.','Family Dashboard'), 600);
           } else {
-            showToast('Join or create a family group to see the Family card', 2500);
+            // Card hidden — show a friendly message only (no orphaned tooltip)
+            showToast('👨‍👩‍👧‍👦 Join or create a family group to unlock the Family card on your Home screen', 3500);
           }
-        }, 500); },
+        }, 600); },
       spot:'#family-dash-card', tip:'Family card shows combined spending, NW, and per-member spotlight.' },
 
     { id:'family_nw_bulk',
       label:'Bulk NW Sharing',
       nav:()=>{ goToScreen('settings');
-        setTimeout(()=>{ const el=document.getElementById('family-nw-settings-group');
-          if(el && el.style.display!=='none'){ el.scrollIntoView({behavior:'smooth',block:'center'});
-            setTimeout(()=>_discSpotlight(el,'Family NW Sharing — choose which accounts appear in the household total. Select All or pick individually. Private accounts stay private.','Bulk NW Sharing'), 400);
-          } else { showToast('Join a family group to enable NW sharing', 2000); }
+        setTimeout(()=>{
+          const el = document.getElementById('family-nw-settings-group');
+          const elVisible = el && el.offsetParent !== null && el.style.display !== 'none';
+          if(elVisible){
+            el.scrollIntoView({behavior:'smooth', block:'center'});
+            setTimeout(()=>_discSpotlight(el,'Choose which of your savings and investment accounts your family can see. You stay in control — private accounts never show to anyone else.','Bulk NW Sharing'), 600);
+          } else {
+            showToast('💎 Join a family group first — then you can choose which accounts to share with your family', 3500);
+          }
         }, 500); },
       spot:'#family-nw-settings-group', tip:'Bulk select which NW accounts family can see — Select All available.' },
 
@@ -38701,17 +38708,22 @@ const DISC_THEMES = [
     { id:'family_key_rotation',
       label:'Automatic Key Rotation',
       nav:()=>{ goToScreen('settings');
-        setTimeout(()=>{ const el=document.querySelector('[onclick*="acc-family"]');
-          if(el){
-            if(!el.getAttribute('data-open')) el.click();
-            setTimeout(()=>{
-              // Try to spotlight a Remove button, fall back to family panel
-              const removeBtn = document.querySelector('[onclick*="mfFamilyRemoveMember"]');
-              const target = removeBtn || el;
-              if(target) target.scrollIntoView({behavior:'smooth',block:'center'});
-              setTimeout(()=>_discSpotlight(target,'When you tap Remove on a member, the family encryption key rotates automatically — the removed member loses access to all future data.','Key Rotation'), 300);
-            }, 700);
-          }
+        setTimeout(()=>{
+          const body = document.getElementById('acc-family-body');
+          if(body && body.style.display === 'none') toggleAccordion('acc-family');
+          setTimeout(()=>{
+            const removeBtn = document.querySelector('[onclick*="mfFamilyRemoveMember"]');
+            if(removeBtn){
+              removeBtn.scrollIntoView({behavior:'smooth', block:'center'});
+              setTimeout(()=>_discSpotlight(removeBtn,'When you tap Remove next to a member, the encryption key for your whole family automatically changes — the removed person can no longer see any new data.','Key Rotation'), 600);
+            } else {
+              const panel = document.getElementById('family-panel-content');
+              if(panel){
+                panel.scrollIntoView({behavior:'smooth', block:'center'});
+                setTimeout(()=>_discSpotlight(panel,'Add family members first — when you remove someone later, the encryption key rotates automatically so they lose access.','Key Rotation'), 500);
+              }
+            }
+          }, 900);
         }, 500); },
       spot:'[onclick*="mfFamilyRemoveMember"]', tip:'Removing a member auto-rotates the family key — departed member loses access.' },
 
@@ -38858,7 +38870,7 @@ function _discFeatClick(id, e) {
 }
 
 // ── Spotlight system ──
-function _discSpotlight(selectorOrEl, tip, label) {
+function _discSpotlight(selectorOrEl, tip, label, _retries) {
   const overlay = document.getElementById('disc-spotlight-overlay');
   const cutout  = document.getElementById('disc-spotlight-cutout');
   const pulse   = document.getElementById('disc-spotlight-pulse');
@@ -38870,9 +38882,26 @@ function _discSpotlight(selectorOrEl, tip, label) {
   const target = (selectorOrEl instanceof Element)
     ? selectorOrEl
     : document.querySelector(selectorOrEl);
-  if (!target) { return; } // element not visible, skip silently
+  if (!target) { return; }
 
   const rect = target.getBoundingClientRect();
+
+  // If rect has zero dimensions, element isn't rendered/scrolled yet — retry up to 5x
+  if ((rect.width === 0 || rect.height === 0) && (_retries || 0) < 5) {
+    // Scroll element into view first, then retry after layout settles
+    try { target.scrollIntoView({behavior:'smooth', block:'center'}); } catch(e) {}
+    setTimeout(() => _discSpotlight(selectorOrEl, tip, label, (_retries||0)+1), 220);
+    return;
+  }
+  if (rect.width === 0 || rect.height === 0) { return; } // give up after retries
+
+  // Ensure element is in viewport — scroll if needed
+  if (rect.top < 0 || rect.bottom > window.innerHeight) {
+    target.scrollIntoView({behavior:'smooth', block:'center'});
+    setTimeout(() => _discSpotlight(selectorOrEl, tip, label, (_retries||0)+1), 400);
+    return;
+  }
+
   const pad = 8;
   const x = rect.left - pad;
   const y = rect.top - pad;
