@@ -4124,10 +4124,14 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
       </div>
     </div>
 
-    <div onclick="showOnboarding()" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;">
+    <div onclick="showOnboarding()" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;border-bottom:1px solid #F5F5F5;">
       <div style="width:36px;height:36px;background:#F0F4FF;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0;">🎬</div>
       <div style="flex:1;"><div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Intro Tour</div><div style="font-size:0.7em;color:var(--text-light);font-weight:600;margin-top:1px;">Replay onboarding slides</div></div>
       <span style="color:#CCC;font-size:0.85em;">›</span>
+    </div>
+    <div onclick="typeof _discReset==='function' ? _discReset() : showToast('Discovery map re-enabled — swipe from left edge',3000)" style="display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer;">
+      <div style="width:36px;height:36px;background:#F5F0FF;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0;">🗺️</div>
+      <div style="flex:1;"><div style="font-weight:800;font-size:0.88em;color:#1E2A6E;">Discovery Map</div><div style="font-size:0.7em;color:var(--text-light);font-weight:600;margin-top:1px;">Swipe from left edge to explore · Tap to re-enable if hidden</div></div>
     </div>
   </div>
 
@@ -38769,8 +38773,15 @@ function _discSave(id) {
   } catch(e) {}
 }
 function _discIsHidden() {
-  try { return !!data._discoveryHidden; } catch(e) { return false; }
+  try { return data._discoveryHidden === true; } catch(e) { return false; }
 }
+// Expose reset for console recovery
+window._discReset = function() {
+  if (typeof data !== 'undefined') { data._discoveryHidden = false; save(); }
+  const hint = document.getElementById('disc-edge-hint');
+  if (hint) hint.classList.add('visible');
+  showToast('✨ Discovery Map re-enabled — swipe from left edge', 3000);
+};
 
 // ── Core public: trackFeature(id) — call this from every onclick ──
 function trackFeature(id) {
