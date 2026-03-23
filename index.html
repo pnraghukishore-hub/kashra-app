@@ -9506,6 +9506,7 @@ function qaSave() {
   viewMonth = monthKey;
   renderHome();
   renderTransactions();
+  try { if (typeof renderBudgetModule === 'function') renderBudgetModule(); } catch(e) {}
   if (isMetal) { renderMetals(); renderNetWorth(); }
 }
 
@@ -21270,7 +21271,7 @@ const BUDGET_EMOJIS = ['💸','🛒','🚗','🏠','💊','🎭','🍔','☕','�
 const DEFAULT_EXPENSE_BUDGETS = [
   // 🍔 Food & Daily Living
   { key:'Groceries & Food',   name:'Groceries & Food',   amount:0, linkedCats:['Groceries','FastFood','Restaurant','Breakfast','Lunch','Dinner','Takeout','Swiggy','Zomato','Snacks','Coffee'], icon:'🛒', type:'expense' },
-  { key:'Transport',          name:'Transport',           amount:0, linkedCats:['Gas','Fuel','Uber','Ola','Auto','Transport','Metro','Bus','Parking','Toll'],              icon:'🚌', type:'expense' },
+  { key:'Transport',          name:'Transport',           amount:0, linkedCats:['Gas','Fuel','Uber','Ola','Auto','Transport','Metro','Bus','Parking','Toll','Auto Service'],              icon:'🚌', type:'expense' },
   { key:'Housing & Utilities',name:'Housing & Utilities', amount:0, linkedCats:['Rent','Mortgage','Electricity','Water','Internet','WiFi','Gas Bill','Utility','Maintenance'], icon:'🏠', type:'expense' },
   { key:'Health & Medical',   name:'Health & Medical',    amount:0, linkedCats:['Doctor','Medicine','Pharmacy','Dental','Hospital','Gym','Lab Test'],                      icon:'💊', type:'expense' },
   { key:'Phone & Subscriptions',name:'Phone & Subscriptions',amount:0,linkedCats:['Phone','Mobile','Netflix','Spotify','Amazon Prime','Hotstar','YouTube Premium','Software'],icon:'📱', type:'expense' },
@@ -21278,17 +21279,39 @@ const DEFAULT_EXPENSE_BUDGETS = [
   { key:'Family & Giving',    name:'Family & Giving',     amount:0, linkedCats:['Parents','Family','Kids','Spouse','Gift','Charity','Donation'],                            icon:'❤️', type:'expense' },
   { key:'Entertainment & Travel',name:'Entertainment & Travel',amount:0,linkedCats:['Travel','Flight','Hotel','Vacation','Movies','Entertainment','Sports','Hobby'],        icon:'✈️', type:'expense' },
   { key:'Education',          name:'Education',           amount:0, linkedCats:['School Fees','College','Course','Books','Tuition','Coaching'],                            icon:'🎓', type:'expense' },
-  { key:'EMI & Loan',         name:'EMI & Loan',          amount:0, linkedCats:['EMI','Loan Payment','Mortgage'],                                                           icon:'🏦', type:'expense' },
+  { key:'EMI & Loan',         name:'EMI & Loan',          amount:0, linkedCats:['EMI','Loan Payment','Loan EMI','Credit Card EMI','Mortgage'],                             icon:'🏦', type:'expense' },
 ];
 
 const DEFAULT_SAVINGS_BUDGETS = [
   // 📈 Investments & Savings
-  { key:'Equity Investments',  name:'Equity Investments',  amount:0, linkedCats:['Stocks','ETF','Mutual Fund','SIP','Crypto'],         icon:'📈', type:'savings' },
-  { key:'Gold & Metals',       name:'Gold & Metals',        amount:0, linkedCats:['Gold','Silver','Gold & Metals','Metals'],               icon:'🥇', type:'savings' },
+  { key:'Equity Investments',  name:'Equity Investments',  amount:0, linkedCats:['Stocks','ETF','Mutual Fund','SIP','Crypto','Investment','Index Fund'],  icon:'📈', type:'savings' },
+  { key:'Gold & Metals',       name:'Gold & Metals',        amount:0, linkedCats:['Gold','Silver','Gold & Metals','Metals','Platinum','Precious Metals'], icon:'🥇', type:'savings' },
   { key:'Retirement Savings',  name:'Retirement Savings',   amount:0, linkedCats:['NPS','PPF','EPF','VPF','401k','IRA','Retirement'],   icon:'🏛️', type:'savings' },
   { key:'Fixed Income',        name:'Fixed Income',         amount:0, linkedCats:['FD','RD','Bonds','Fixed Deposit'],                   icon:'🏦', type:'savings' },
   { key:'Emergency Fund',      name:'Emergency Fund',       amount:0, linkedCats:['Emergency','Savings','Liquid'],                      icon:'🛡️', type:'savings' },
 ];
+
+// ── Migrate stored goals to pick up any new linkedCats added to DEFAULT arrays ──
+// Runs once on load — safe to run repeatedly (idempotent merge, no data loss)
+function migrateBudgetGoalLinkedCats() {
+  const allDefaults = [...DEFAULT_EXPENSE_BUDGETS, ...DEFAULT_SAVINGS_BUDGETS];
+  let dirty = false;
+  ['_expenseGoals','_savingsGoals'].forEach(storeKey => {
+    if (!data[storeKey]) return; // not yet seeded — getBudgetGoals will seed from defaults
+    data[storeKey].forEach(storedGoal => {
+      const def = allDefaults.find(d => d.key === storedGoal.key);
+      if (!def) return;
+      const existing = (storedGoal.linkedCats || []).map(c => c.toLowerCase());
+      const toAdd = (def.linkedCats || []).filter(c => !existing.includes(c.toLowerCase()));
+      if (toAdd.length > 0) {
+        storedGoal.linkedCats = [...(storedGoal.linkedCats || []), ...toAdd];
+        dirty = true;
+        console.log(`[Budget Migration] Added to "${storedGoal.key}":`, toAdd);
+      }
+    });
+  });
+  if (dirty) { save(); console.log('[Budget Migration] Stored goals updated with new linkedCats'); }
+}
 
 function getBudgetGoals(type) {
   const key = type === 'savings' ? '_savingsGoals' : '_expenseGoals';
@@ -31513,7 +31536,9 @@ _auth.onAuthStateChanged(async user => {
       NW_TYPES[c.key] = { label: c.label, emoji: c.emoji||'🏦', color:'#6B7280', isLiab: c.isLiab||false };
     });
     try { migrateAssetClassTags(); migrateSebiCategory(); } catch(e) {}
+    try { migrateBudgetGoalLinkedCats(); } catch(e) {}
     applyStoredTheme(); applyStoredCBMode();
+    setTimeout(runRecurringScheduler, 800); // post recurring txns before first render
     renderHome();
     try { renderNetWorth(); } catch(e) {}
     try { renderMetals(); } catch(e) {}
