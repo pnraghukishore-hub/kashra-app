@@ -2442,14 +2442,14 @@ CRITICAL — GOALS: Every goal in the snapshot already includes funded amount, t
   ═══════════════════════════════════════════════════ */
   #disc-edge-hint {
     position: fixed; left: 0; top: 50%; transform: translateY(-50%);
-    width: 3px; height: 44px;
-    background: rgba(245,200,66,0.5);
-    border-radius: 0 3px 3px 0; z-index: 90; opacity: 0; pointer-events: none;
-    transition: opacity 0.5s;
-    padding-right: 41px; /* wide invisible tap target */
+    width: 8px; height: 56px;
+    background: linear-gradient(180deg, transparent 0%, #F5C842 40%, #F5C842 60%, transparent 100%);
+    border-radius: 0 6px 6px 0; z-index: 90; opacity: 0; pointer-events: none;
+    transition: opacity 0.4s;
+    padding-right: 36px; /* wide invisible tap target */
   }
-  #disc-edge-hint.visible { opacity: 1; pointer-events: auto; cursor: pointer; }
-  @keyframes discEdgePulse { 0%,100%{opacity:.5} 50%{opacity:1} }
+  #disc-edge-hint.visible { opacity: 0.85; pointer-events: auto; cursor: pointer; }
+  #disc-edge-hint.visible:active { opacity: 1; width: 12px; }
   #disc-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 110; display: none; transition: background 0.35s;
   }
@@ -22114,6 +22114,9 @@ function getBudgetActual(goal, monthKey) {
   const cats = (goal.linkedCats || [goal.key]).map(c => c.toLowerCase().trim());
   const fm = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
   let total = 0;
+  // DEBUG: uncomment to trace budget calculation
+  // const _dbg = (monthKey === (typeof budgetViewMonth!=='undefined'?budgetViewMonth:''));
+  // if (_dbg) console.log('[Budget DEBUG] goal:', goal.key||goal.name, 'cats:', cats, 'expenses:', (m?.expenses||[]).length);
   // Bug fix: normalize ALL strings to lowercase for case-insensitive matching
   // 'Breakfast' vs 'fastfood' — cats already lowercased, ec/eit/esc also lowercased
   const matchesCat = (e) => {
@@ -30857,11 +30860,18 @@ function dismissOnboarding() {
   setTimeout(() => {
     overlay.style.display = 'none';
     overlay.classList.remove('hiding');
-    // After intro slides, launch the coach marks tour
-    startCoachTour();
+    // Replace legacy coach tour with Discovery Map — open it automatically
+    setTimeout(() => {
+      if (typeof discOpen === 'function' && !_discIsHidden()) {
+        discOpen();
+        // Show a welcome spotlight on the first feature after a moment
+        setTimeout(() => {
+          if (typeof _discBuildPanel === 'function') _discBuildPanel();
+        }, 400);
+      }
+    }, 300);
   }, 600);
   localStorage.setItem(OB_SEEN_KEY, '1');
-  // Persist the locale-detected currency on first launch so next load uses it
   if (!localStorage.getItem('mf_currency')) {
     localStorage.setItem('mf_currency', JSON.stringify(currentCurrency));
   }
@@ -38802,10 +38812,9 @@ function _discIsHidden() {
 window._discReset = function() {
   if (typeof data !== 'undefined') { data._discoveryHidden = false; save(); }
   _discUpdateEdgeHint();
-  // Force hint visible immediately regardless of screen
   const hint = document.getElementById('disc-edge-hint');
   if (hint) hint.classList.add('visible');
-  showToast('Discovery map re-enabled — swipe from left edge', 3000);
+  showToast('Discovery Map re-enabled — gold bar on left edge, or swipe right from it', 3000);
 };
 
 // ── Core public: trackFeature(id) — call this from every onclick ──
@@ -38834,12 +38843,41 @@ function discClose() {
   document.getElementById('disc-backdrop').classList.remove('open');
 }
 
+// ── Budget diagnostic tool — run window.debugBudget() in console ──
+window.debugBudget = function(mk) {
+  const monthKey = mk || (typeof budgetViewMonth !== 'undefined' ? budgetViewMonth : viewMonth);
+  const m = data[monthKey] || {};
+  const fm = (window._mfFamilyTxns && window._mfFamilyTxns[monthKey]) || {};
+  const expGoals = typeof getBudgetGoals === 'function' ? getBudgetGoals('expense') : [];
+  console.group('[Budget Debug] Month: ' + monthKey);
+  console.log('Own expenses:', (m.expenses||[]).length, 'total:', (m.expenses||[]).reduce((s,e)=>s+Number(e.amount||0),0).toFixed(2));
+  console.log('Family expenses:', (fm.expenses||[]).length);
+  console.log('Own income:', (m.income||[]).length, 'total:', (m.income||[]).reduce((s,e)=>s+Number(e.amount||0),0).toFixed(2));
+  console.log('Budget goals:', expGoals.map(g => g.key||g.name));
+  expGoals.forEach(g => {
+    const actual = typeof getBudgetActual === 'function' ? getBudgetActual(g, monthKey) : '?';
+    const cats = (g.linkedCats || [g.key]).map(c=>c.toLowerCase());
+    const matched = (m.expenses||[]).filter(e => {
+      const ec = (e.category||'').toLowerCase().trim();
+      return cats.some(c => ec===c || ec.replace(/\s+/g,'')===c.replace(/\s+/g,''));
+    });
+    console.log('  Goal:', g.key||g.name, '| cats:', cats, '| matched txns:', matched.length, '| actual:', actual);
+    matched.forEach(e => console.log('    →', e.category, e.amount, e.date, e._recurringId||''));
+  });
+  const unmatched = (m.expenses||[]).filter(e => {
+    const ec = (e.category||'').toLowerCase().trim();
+    return !expGoals.some(g => (g.linkedCats||[g.key]).map(c=>c.toLowerCase()).some(c=>ec===c||ec.replace(/\s+/g,'')===c.replace(/\s+/g,'')));
+  });
+  console.log('Unmatched expenses (not in any budget goal):', unmatched.length, unmatched.map(e=>e.category+'='+e.amount));
+  console.groupEnd();
+};
+
 // ── Show edge hint on home screen ──
 function _discUpdateEdgeHint() {
   const hint = document.getElementById('disc-edge-hint');
   if (!hint) return;
-  const onHome = document.getElementById('screen-home')?.classList.contains('active');
-  hint.classList.toggle('visible', onHome && !_discIsHidden());
+  // Show on all screens when not hidden
+  hint.classList.toggle('visible', !_discIsHidden());
 }
 
 // ── Build panel UI ──
@@ -39101,6 +39139,7 @@ document.addEventListener('touchend', e=>{
   if (typeof _origSS === 'function') {
     window.switchScreen = function(name, btn) {
       _origSS.call(this, name, btn);
+      setTimeout(_discUpdateEdgeHint, 100);
       setTimeout(_discUpdateEdgeHint, 200);
     };
   }
