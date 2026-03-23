@@ -38707,7 +38707,7 @@ const DISC_THEMES = [
           const cardVisible = card && card.offsetParent !== null && card.style.display !== 'none';
           if(cardVisible){
             card.scrollIntoView({behavior:'smooth', block:'center'});
-            setTimeout(()=>_discSpotlight('#family-dash-card','This is the Family card — shows your household spending, combined net worth, and each member's contribution. Tap a member chip to zoom in on their activity.','Family Dashboard'), 600);
+            setTimeout(()=>_discSpotlight('#family-dash-card','This is the Family card — shows your household spending, combined net worth, and each member\'s contribution. Tap a member chip to zoom in on their activity.','Family Dashboard'), 600);
           } else {
             // Card hidden — show a friendly message only (no orphaned tooltip)
             showToast('👨‍👩‍👧‍👦 Join or create a family group to unlock the Family card on your Home screen', 3500);
