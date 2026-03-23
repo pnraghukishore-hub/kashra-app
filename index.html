@@ -21306,11 +21306,11 @@ function migrateBudgetGoalLinkedCats() {
       if (toAdd.length > 0) {
         storedGoal.linkedCats = [...(storedGoal.linkedCats || []), ...toAdd];
         dirty = true;
-        console.log(`[Budget Migration] Added to "${storedGoal.key}":`, toAdd);
+        console.debug(`[Budget Migration] Added to "${storedGoal.key}":`, toAdd);
       }
     });
   });
-  if (dirty) { save(); console.log('[Budget Migration] Stored goals updated with new linkedCats'); }
+  if (dirty) { save(); console.debug('[Budget Migration] Stored goals updated with new linkedCats'); }
 }
 
 function getBudgetGoals(type) {
@@ -35856,16 +35856,6 @@ function scoreNWTrajectory(nw, profile) {
 
 </script>
 
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js')
-          .then(reg => console.log('[MoneyFi] SW registered:', reg.scope))
-          .catch(err => console.warn('[MoneyFi] SW failed:', err));
-      });
-    }
-  </script>
-
 <!-- ═══ FHS ACCOUNT PICKER BOTTOM SHEET ═══ -->
 <div id="fhs-picker-overlay" onclick="closeFHSPickerSheet()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;"></div>
 <div id="fhs-picker-sheet" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:2001;background:#fff;border-radius:20px 20px 0 0;max-height:90vh;flex-direction:column;">
@@ -36889,10 +36879,6 @@ function buildAIContext() {
       return '  Pillar detail error: ' + e.message;
     }
   })();
-
-    // Debug: log what the AI sees for equity/crypto — check browser console if AI gives wrong answers
-    console.log('[AI Context] EQUITY HOLDINGS:', equityHoldingsLines.slice(0, 500));
-    console.log('[AI Context] CRYPTO HOLDINGS:', cryptoHoldingsLines.slice(0, 500));
 
     return `You are MoneyFi's personal AI financial advisor — a CFP-level coach with full access to this user's complete financial picture in MoneyFi.
 
@@ -40447,10 +40433,10 @@ async function mfDriveReadFamilyFile(folderId, fileName) {
 async function mfReadSharedFolderFile(folderId, fileName) {
   const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-  console.log('[MF Family] Searching for file:', fileName, 'in folder:', folderId);
+  console.debug('[MF Family] Searching for file:', fileName, 'in folder:', folderId);
   const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + window._driveToken } });
   const json = await resp.json();
-  console.log('[MF Family] Search result:', JSON.stringify(json).slice(0,200));
+  console.debug('[MF Family] Search result:', JSON.stringify(json).slice(0,200));
   const fileId = (json.files || [])[0]?.id;
   if (!fileId) return null;
   const fileResp = await fetch(
@@ -40497,7 +40483,7 @@ async function mfWriteSharedFolderFile(folderId, fileName, b64Content) {
 
 // Read manifest directly by file ID using public URL (no auth needed — file is set to public)
 async function mfReadManifestById(fileId, keyBytes) {
-  console.log('[MF Family] Reading manifest by fileId (public URL):', fileId);
+  console.debug('[MF Family] Reading manifest by fileId (public URL):', fileId);
   // Use Drive's export/download URL which works for publicly shared files
   const publicUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   try {
@@ -40573,7 +40559,7 @@ async function mfWriteManifest(folderId, keyBytes, manifest) {
     enc: b64,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   });
-  console.log('[MF Family] Manifest written to Firestore for familyId:', familyId);
+  console.debug('[MF Family] Manifest written to Firestore for familyId:', familyId);
   return familyId; // return familyId as the "file ID" equivalent
 }
 
@@ -40721,21 +40707,21 @@ window.mfFamilyJoin = async function() {
   }
 
   showToast('🔗 Joining family…', 2000);
-  console.log('[MF Family] Joining familyId:', payload.familyId);
+  console.debug('[MF Family] Joining familyId:', payload.familyId);
 
   try {
     // Read manifest from Firestore using familyId — works cross-account
     let manifest = null;
     try {
       manifest = await mfReadManifestForFamily(payload.familyId, keyBytes);
-      console.log('[MF Family] Manifest from Firestore:', manifest ? 'OK members='+manifest.members?.length : 'null');
+      console.debug('[MF Family] Manifest from Firestore:', manifest ? 'OK members='+manifest.members?.length : 'null');
     } catch(e) {
       console.warn('[MF Family] Firestore read failed:', e.message);
     }
 
     // If Firestore read failed (e.g. not yet signed in to Firebase), use a fresh manifest
     if (!manifest) {
-      console.log('[MF Family] Creating fresh manifest for join');
+      console.debug('[MF Family] Creating fresh manifest for join');
       manifest = {
         familyId: payload.familyId,
         ownerName: payload.ownerName,
@@ -40770,7 +40756,7 @@ window.mfFamilyJoin = async function() {
     // Write updated manifest to Firestore — works cross-account, member has own Firebase auth
     try {
       await mfWriteManifestForFamily(payload.familyId, keyBytes, manifest);
-      console.log('[MF Family] Manifest written to Firestore — owner will see member on next open');
+      console.debug('[MF Family] Manifest written to Firestore — owner will see member on next open');
     } catch(e) {
       console.warn('[MF Family] Firestore write failed:', e.message);
       showToast('⚠️ Joined locally — owner needs to be online to sync roster', 3000);
@@ -40799,7 +40785,7 @@ window.mfFamilyJoin = async function() {
       showToast('✅ Family history loaded', 2000);
       try { renderHome(); } catch(e) {}
       try { renderTransactions && renderTransactions(); } catch(e) {}
-      console.log('[MF Family] New member loaded history for', monthsToLoad.length, 'months');
+      console.debug('[MF Family] New member loaded history for', monthsToLoad.length, 'months');
     } catch(e) {
       console.warn('[MF Family] History load failed:', e.message);
     }
@@ -40848,7 +40834,7 @@ window.mfFamilyRemoveMember = async function(uid, name) {
       })
     );
     await Promise.all(rekeyPromises);
-    console.log('[MF Family] New key delivered to', remaining.length, 'remaining members');
+    console.debug('[MF Family] New key delivered to', remaining.length, 'remaining members');
 
     // 6. Clean up departed member docs
     try {
@@ -41028,7 +41014,7 @@ window.renderFamilyDashCard = async function() {
 
   const meta     = mfGetFamilyMeta();
   const keyBytes = mfGetFamilyKeyBytes();
-  console.log('[MF Family] renderFamilyDashCard — meta:', meta?.familyId, 'hasKey:', !!keyBytes);
+  console.debug('[MF Family] renderFamilyDashCard — meta:', meta?.familyId, 'hasKey:', !!keyBytes);
 
   // Hide card if not in a family
   if (!meta || !keyBytes) {
@@ -41204,7 +41190,7 @@ async function mfSyncFamilyTxns(monthKey) {
       enc,                       // AES-256-GCM encrypted blob — Firestore sees nothing else
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    console.log('[MF Family] Txns synced (encrypted) for', monthKey,
+    console.debug('[MF Family] Txns synced (encrypted) for', monthKey,
       '— exp:', txnData.expenses.length, 'inc:', txnData.income.length);
   } catch(e) {
     console.error('[MF Family] Txn sync FAILED for', monthKey, ':', e.message);
@@ -41294,7 +41280,7 @@ async function mfLoadFamilyTxns(monthKey) {
       });
     });
     window._mfFamilyTxns[monthKey] = merged;
-    console.log('[MF Family] Loaded + decrypted txns for', monthKey,
+    console.debug('[MF Family] Loaded + decrypted txns for', monthKey,
       '— exp:', merged.expenses.length, 'inc:', merged.income.length);
   } catch(e) {
     console.warn('[MF Family] Load txns failed:', e.message);
@@ -41346,7 +41332,7 @@ function mfStartFamilyTxnsListener() {
         await Promise.all([...changedMonths].map(m => mfLoadFamilyTxns(m)));
         try { renderHome(); } catch(e) {}
         try { renderTransactions && renderTransactions(); } catch(e) {}
-        console.log('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
+        console.debug('[MF Family] Txns updated — months reloaded:', [...changedMonths].join(', '));
       }
     }, err => console.warn('[MF Family] Txns listener error:', err.message));
 
@@ -41390,7 +41376,7 @@ async function mfSyncMemberNW() {
       familyId: meta.familyId,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    console.log('[MF Family] NW sync pushed:', visibleAccounts.length, 'visible accounts');
+    console.debug('[MF Family] NW sync pushed:', visibleAccounts.length, 'visible accounts');
   } catch(e) {
     console.warn('[MF Family] NW sync failed:', e.message);
   }
@@ -41672,7 +41658,7 @@ async function mfCheckRekey() {
     // Apply new key silently
     const newKeyBytes = Uint8Array.from(atob(newKeyB64), c => c.charCodeAt(0));
     mfSaveFamilyKey(newKeyBytes);
-    console.log('[MF Family] Silent re-key applied — new family key installed');
+    console.debug('[MF Family] Silent re-key applied — new family key installed');
 
     // Delete the rekey doc so it only applies once
     await mfGetDb()
